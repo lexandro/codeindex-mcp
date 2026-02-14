@@ -12,6 +12,9 @@ codeindex-mcp
 *.swp
 *.swo
 
+# Local scripts
+build.bat
+
 # OS
 .DS_Store
 Thumbs.db

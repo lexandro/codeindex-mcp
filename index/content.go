@@ -7,7 +7,6 @@ import (
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
-	"github.com/blevesearch/bleve/v2/search/query"
 )
 
 // ContentIndex provides full-text search over file contents using Bleve in-memory index.
@@ -65,37 +64,6 @@ func buildIndexMapping() *mapping.IndexMappingImpl {
 	return indexMapping
 }
 
-// IndexFile adds or updates a file's content in the search index.
-func (ci *ContentIndex) IndexFile(relativePath string, content string, language string) error {
-	ci.mu.Lock()
-	defer ci.mu.Unlock()
-
-	doc := bleveDocument{
-		Content:  content,
-		Path:     relativePath,
-		Language: language,
-	}
-
-	ci.fileContents[relativePath] = content
-
-	if err := ci.index.Index(relativePath, doc); err != nil {
-		return fmt.Errorf("indexing file %s: %w", relativePath, err)
-	}
-	return nil
-}
-
-// RemoveFile removes a file from the search index.
-func (ci *ContentIndex) RemoveFile(relativePath string) error {
-	ci.mu.Lock()
-	defer ci.mu.Unlock()
-
-	delete(ci.fileContents, relativePath)
-	if err := ci.index.Delete(relativePath); err != nil {
-		return fmt.Errorf("removing file %s from index: %w", relativePath, err)
-	}
-	return nil
-}
-
 // ContentSearchResult holds a search match within a file.
 type ContentSearchResult struct {
 	RelativePath string
@@ -120,200 +88,32 @@ type SearchOptions struct {
 	ContextLines int
 }
 
-// Search performs a full-text search across all indexed files.
-// Query format:
-//   - Plain text: match query (word-level matching)
-//   - "quoted text": phrase query (exact phrase match)
-//   - /regex/: regexp query
-func (ci *ContentIndex) Search(options SearchOptions) ([]ContentSearchResult, int, error) {
-	ci.mu.RLock()
-	defer ci.mu.RUnlock()
+// IndexFile adds or updates a file's content in the search index.
+func (ci *ContentIndex) IndexFile(relativePath string, content string, language string) error {
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
 
-	if options.MaxResults <= 0 {
-		options.MaxResults = 50
-	}
-	if options.ContextLines < 0 {
-		options.ContextLines = 0
+	doc := bleveDocument{
+		Content:  content,
+		Path:     relativePath,
+		Language: language,
 	}
 
-	bleveQuery := buildQuery(options.Query)
+	ci.fileContents[relativePath] = content
 
-	searchRequest := bleve.NewSearchRequest(bleveQuery)
-	searchRequest.Size = options.MaxResults * 5 // Get more results because we'll filter and group by file
-	searchRequest.Fields = []string{"path", "language"}
-
-	searchResults, err := ci.index.Search(searchRequest)
-	if err != nil {
-		return nil, 0, fmt.Errorf("searching index: %w", err)
+	if err := ci.index.Index(relativePath, doc); err != nil {
+		return fmt.Errorf("indexing file %s: %w", relativePath, err)
 	}
-
-	// Group results by file and find matching lines
-	resultMap := make(map[string]*ContentSearchResult)
-	var orderedPaths []string
-	totalMatches := 0
-
-	// Normalize FilePath: backslash to forward slash for cross-platform consistency
-	normalizedFilePath := strings.ReplaceAll(options.FilePath, "\\", "/")
-
-	for _, hit := range searchResults.Hits {
-		relativePath := hit.ID
-		content, ok := ci.fileContents[relativePath]
-		if !ok {
-			continue
-		}
-
-		// Apply file path filter (exact match, overrides FileGlob)
-		if normalizedFilePath != "" {
-			if relativePath != normalizedFilePath {
-				continue
-			}
-		} else if options.FileGlob != "" {
-			// Apply file glob filter if specified
-			matched := matchSimpleGlob(relativePath, options.FileGlob)
-			if !matched {
-				continue
-			}
-		}
-
-		// Find actual matching lines in the content
-		lineMatches := findMatchingLines(content, options.Query, options.ContextLines)
-		if len(lineMatches) == 0 {
-			continue
-		}
-
-		totalMatches += len(lineMatches)
-
-		if _, exists := resultMap[relativePath]; !exists {
-			resultMap[relativePath] = &ContentSearchResult{
-				RelativePath: relativePath,
-			}
-			orderedPaths = append(orderedPaths, relativePath)
-		}
-		resultMap[relativePath].Matches = append(resultMap[relativePath].Matches, lineMatches...)
-
-		if len(orderedPaths) >= options.MaxResults {
-			break
-		}
-	}
-
-	results := make([]ContentSearchResult, 0, len(orderedPaths))
-	for _, path := range orderedPaths {
-		results = append(results, *resultMap[path])
-	}
-
-	return results, totalMatches, nil
+	return nil
 }
 
-// buildQuery parses the query string into a Bleve query.
-func buildQuery(queryString string) query.Query {
-	queryString = strings.TrimSpace(queryString)
+// RemoveFile removes a file from the search index.
+func (ci *ContentIndex) RemoveFile(relativePath string) {
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
 
-	// Regex query: /pattern/
-	if strings.HasPrefix(queryString, "/") && strings.HasSuffix(queryString, "/") && len(queryString) > 2 {
-		regexPattern := queryString[1 : len(queryString)-1]
-		return bleve.NewRegexpQuery(regexPattern)
-	}
-
-	// Phrase query: "exact phrase"
-	if strings.HasPrefix(queryString, "\"") && strings.HasSuffix(queryString, "\"") && len(queryString) > 2 {
-		phrase := queryString[1 : len(queryString)-1]
-		return bleve.NewMatchPhraseQuery(phrase)
-	}
-
-	// Default: match query (word-level)
-	return bleve.NewMatchQuery(queryString)
-}
-
-// findMatchingLines searches content line by line for the query terms.
-// Returns LineMatch entries with context lines.
-func findMatchingLines(content string, queryString string, contextLines int) []LineMatch {
-	lines := strings.Split(content, "\n")
-	searchTerm := extractSearchTerm(queryString)
-	searchTermLower := strings.ToLower(searchTerm)
-
-	var matches []LineMatch
-
-	for lineIdx, line := range lines {
-		lineLower := strings.ToLower(line)
-		if !strings.Contains(lineLower, searchTermLower) {
-			continue
-		}
-
-		match := LineMatch{
-			LineNumber: lineIdx + 1, // 1-based
-			LineText:   line,
-		}
-
-		// Gather context lines before
-		if contextLines > 0 {
-			startCtx := lineIdx - contextLines
-			if startCtx < 0 {
-				startCtx = 0
-			}
-			for i := startCtx; i < lineIdx; i++ {
-				match.ContextBefore = append(match.ContextBefore, lines[i])
-			}
-		}
-
-		// Gather context lines after
-		if contextLines > 0 {
-			endCtx := lineIdx + contextLines + 1
-			if endCtx > len(lines) {
-				endCtx = len(lines)
-			}
-			for i := lineIdx + 1; i < endCtx; i++ {
-				match.ContextAfter = append(match.ContextAfter, lines[i])
-			}
-		}
-
-		matches = append(matches, match)
-	}
-
-	return matches
-}
-
-// extractSearchTerm strips query syntax to get the raw search term for line matching.
-func extractSearchTerm(queryString string) string {
-	queryString = strings.TrimSpace(queryString)
-
-	// Strip regex delimiters
-	if strings.HasPrefix(queryString, "/") && strings.HasSuffix(queryString, "/") && len(queryString) > 2 {
-		return queryString[1 : len(queryString)-1]
-	}
-
-	// Strip phrase quotes
-	if strings.HasPrefix(queryString, "\"") && strings.HasSuffix(queryString, "\"") && len(queryString) > 2 {
-		return queryString[1 : len(queryString)-1]
-	}
-
-	return queryString
-}
-
-// matchSimpleGlob is a basic glob matcher for file filtering within search results.
-func matchSimpleGlob(path string, pattern string) bool {
-	pattern = strings.ReplaceAll(pattern, "\\", "/")
-
-	// Handle **/ prefix
-	if strings.HasPrefix(pattern, "**/") {
-		suffix := pattern[3:]
-		if strings.HasSuffix(path, suffix) || strings.Contains(path, "/"+suffix) {
-			return true
-		}
-		// Try matching just the extension part
-		if strings.HasPrefix(suffix, "*.") {
-			ext := suffix[1:] // e.g., ".go"
-			return strings.HasSuffix(path, ext)
-		}
-	}
-
-	// Handle *.ext pattern
-	if strings.HasPrefix(pattern, "*.") {
-		ext := pattern[1:] // e.g., ".go"
-		return strings.HasSuffix(path, ext)
-	}
-
-	// Direct substring match as fallback
-	return strings.Contains(path, pattern)
+	delete(ci.fileContents, relativePath)
+	ci.index.Delete(relativePath)
 }
 
 // DocumentCount returns the number of documents in the Bleve index.

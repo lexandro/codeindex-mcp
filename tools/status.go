@@ -86,11 +86,16 @@ func (h *StatusHandler) Handle(ctx context.Context, req *mcp.CallToolRequest, ar
 
 // formatDuration formats a duration in a human-readable way.
 func formatDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%.0fs", d.Seconds())
+	totalSeconds := int(d.Seconds())
+	if totalSeconds < 60 {
+		return fmt.Sprintf("%ds", totalSeconds)
 	}
-	if d < time.Hour {
-		return fmt.Sprintf("%.0fm%.0fs", d.Minutes(), d.Seconds()-d.Minutes()*60)
+	totalMinutes := totalSeconds / 60
+	remainderSeconds := totalSeconds % 60
+	if totalMinutes < 60 {
+		return fmt.Sprintf("%dm%ds", totalMinutes, remainderSeconds)
 	}
-	return fmt.Sprintf("%.0fh%.0fm", d.Hours(), d.Minutes()-d.Hours()*60)
+	hours := totalMinutes / 60
+	remainderMinutes := totalMinutes % 60
+	return fmt.Sprintf("%dh%dm", hours, remainderMinutes)
 }

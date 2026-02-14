@@ -45,9 +45,7 @@ var DefaultIgnorePatterns = []string{
 	"venv",
 	".env",
 
-	// Go
-	".go",
-	// (vendor already listed)
+	// Go (vendor already listed above)
 
 	// Compiled / Binary extensions
 	"*.exe",

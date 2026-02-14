@@ -14,6 +14,7 @@ codeindex-mcp
 
 # Local scripts
 build.bat
+clau.bat
 
 # OS
 .DS_Store

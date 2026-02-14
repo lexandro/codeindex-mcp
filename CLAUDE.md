@@ -2,9 +2,6 @@
 
 In-memory MCP server for source code indexing. Replaces grep/find with fast indexed search.
 
-## Communication
-- Always communicate in Hungarian (magyarul) with the developer
-
 ## Tech Stack
 - Language: Go 1.22+
 - MCP SDK: github.com/modelcontextprotocol/go-sdk
@@ -20,12 +17,13 @@ In-memory MCP server for source code indexing. Replaces grep/find with fast inde
 - Run: `./codeindex-mcp.exe --root <project-dir>`
 
 ## Architecture
-- `main.go` - Entry point, flag parsing, component wiring
+- `main.go` - Entry point, CLI flag parsing, component wiring
+- `indexing.go` - Directory walking, parallel file indexing, watcher event handling
 - `server/` - MCP server setup, tool registration (stdio transport)
 - `index/` - Dual index: Bleve content index + file path index
 - `watcher/` - Recursive fsnotify wrapper with debouncing
 - `ignore/` - .gitignore + .claudeignore + default + custom ignore patterns
-- `tools/` - MCP tool handlers (search, files, status, reindex)
+- `tools/` - MCP tool handlers (search, files, status, reindex, read)
 - `language/` - File extension to language mapping, binary detection
 
 ## AI-Optimized Coding Principles

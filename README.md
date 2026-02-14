@@ -1,135 +1,134 @@
 # codeindex-mcp
 
-In-memory MCP szerver forráskód indexeléshez. A `grep` és `find` parancsok gyors, indexelt alternatívája, amelyet Claude Code (vagy bármely MCP-kompatibilis kliens) használhat.
+In-memory [MCP](https://modelcontextprotocol.io/) server for source code indexing. A fast, indexed replacement for `grep` and `find`, designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and any MCP-compatible client.
 
-## Mi ez?
+## Why?
 
-A `codeindex-mcp` egy [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) szerver, amely induláskor memóriába indexeli a projekt összes forrásfájlját, majd 4 tool-t biztosít a kereséshez. A háttérben futó file watcher automatikusan frissíti az indexet minden fájlváltozáskor.
+- **Orders of magnitude faster** than `grep`/`find` on large codebases — uses a pre-built in-memory index
+- **Full-text search** powered by Bleve (word, exact phrase, and regex queries)
+- **Glob-based file search** with `**` doublestar support
+- **Auto-updating** — a background file watcher keeps the index in sync with disk
+- **Configurable filtering** — respects `.gitignore`, `.claudeignore`, and custom exclude patterns
+- **Zero runtime dependencies** — single static Go binary (~17 MB)
 
-**Miért hasznos?**
-- A `grep`/`find` parancsoknál nagyságrendekkel gyorsabb nagy kódbázisokon
-- Full-text search Bleve-vel (szó, pontos kifejezés, regex)
-- Glob-alapú fájlkeresés doublestar támogatással (`**/*.go`)
-- Automatikus inkrementális frissítés file watcher-rel
-- Konfiguálható szűrés: `.gitignore`, `.claudeignore`, egyedi minták
+## Installation
 
-## Telepítés
+### Prerequisites
 
-### Előfeltételek
+- [Go 1.22+](https://go.dev/dl/)
 
-- Go 1.22+ ([letöltés](https://go.dev/dl/))
-
-### Build
+### Build from source
 
 ```bash
 git clone https://github.com/lexandro/codeindex-mcp.git
 cd codeindex-mcp
-go build -o codeindex-mcp.exe .
+go build -o codeindex-mcp .
 ```
 
-Az eredmény egyetlen statikus bináris (~17 MB), külső dependency nélkül.
+On Windows this produces `codeindex-mcp.exe`.
 
-### Tesztek futtatása
+### Run tests
 
 ```bash
 go test ./...
 ```
 
-## Használat
+## Usage
 
-### Önálló futtatás (teszteléshez)
+### Standalone (for testing)
 
 ```bash
-./codeindex-mcp.exe --root C:\projects\my-project
+./codeindex-mcp --root /path/to/project
 ```
 
-A szerver stdio-n kommunikál (stdin/stdout), tehát önállóan nem interaktív — MCP kliensből kell használni.
+The server communicates over stdio (stdin/stdout) using the MCP protocol, so it is not interactive on its own — use it from an MCP client.
 
-### Claude Code integráció
+### Claude Code integration
 
-Add hozzá a Claude Code MCP beállításokhoz (`.claude/settings.json` vagy globális settings):
+Add to your Claude Code MCP settings (`.claude/settings.json` or global settings):
 
 ```json
 {
   "mcpServers": {
     "codeindex": {
-      "command": "C:\\path\\to\\codeindex-mcp.exe",
-      "args": ["--root", "C:\\projects\\my-project"]
+      "command": "/path/to/codeindex-mcp",
+      "args": ["--root", "/path/to/project"]
     }
   }
 }
 ```
 
-Projekt-specifikus beállításhoz a projekt gyökerében `.mcp.json` fájlban:
+For project-specific configuration, create `.mcp.json` in the project root:
 
 ```json
 {
   "mcpServers": {
     "codeindex": {
-      "command": "C:\\path\\to\\codeindex-mcp.exe",
+      "command": "/path/to/codeindex-mcp",
       "args": ["--root", "."]
     }
   }
 }
 ```
 
-Ezután a Claude Code automatikusan használhatja a `codeindex_search`, `codeindex_files`, `codeindex_status` és `codeindex_reindex` tool-okat.
+Claude Code will then automatically use `codeindex_search`, `codeindex_files`, `codeindex_read`, `codeindex_status`, and `codeindex_reindex` tools.
 
-## CLI paraméterek
+## CLI flags
 
-| Paraméter | Alapértelmezés | Leírás |
-|-----------|----------------|--------|
-| `--root DIR` | aktuális könyvtár | A projekt gyökérkönyvtára |
-| `--exclude PATTERN` | _(nincs)_ | Extra ignore minta, ismételhető (pl. `--exclude "*.generated.go" --exclude "vendor/"`) |
-| `--max-file-size N` | `1048576` (1 MB) | Maximális fájlméret byte-ban; ennél nagyobb fájlok kimaradnak az indexből |
-| `--max-results N` | `50` | Alapértelmezett maximum találatszám |
-| `--log-level LEVEL` | `info` | Naplózási szint: `debug`, `info`, `warn`, `error` |
-| `--log-file PATH` | _(stderr)_ | Napló fájl elérési útja; alapból stderr-re ír |
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--root DIR` | current directory | Project root directory to index |
+| `--exclude PATTERN` | _(none)_ | Extra ignore pattern, repeatable (e.g. `--exclude "*.generated.go" --exclude "vendor/"`) |
+| `--max-file-size N` | `1048576` (1 MB) | Maximum file size in bytes; larger files are skipped |
+| `--max-results N` | `50` | Default maximum number of search results |
+| `--log-level LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `--log-file PATH` | `<root>/codeindex-mcp.log` | Log file path |
 
-### Példák
+### Examples
 
 ```bash
-# Alaphasználat - aktuális könyvtár indexelése
-./codeindex-mcp.exe
+# Index the current directory
+./codeindex-mcp
 
-# Megadott projekt gyökér, extra kizárásokkal
-./codeindex-mcp.exe --root /home/user/myproject \
+# Specify project root with extra exclusions
+./codeindex-mcp --root ~/myproject \
   --exclude "*.generated.go" \
   --exclude "testdata/"
 
-# Debug naplózás fájlba
-./codeindex-mcp.exe --root . --log-level debug --log-file /tmp/codeindex.log
+# Debug logging to a specific file
+./codeindex-mcp --root . --log-level debug --log-file /tmp/codeindex.log
 
-# Nagyobb fájlok engedélyezése (5 MB)
-./codeindex-mcp.exe --root . --max-file-size 5242880
+# Allow larger files (5 MB)
+./codeindex-mcp --root . --max-file-size 5242880
 ```
 
-## MCP Tool-ok
+## MCP Tools
 
-A szerver 4 tool-t regisztrál:
+The server registers 5 tools:
 
-### 1. `codeindex_search` — Tartalom keresés
+### 1. `codeindex_search` — Content search
 
-Full-text keresés az indexelt fájlok tartalmában.
+Full-text search across all indexed file contents.
 
-**Paraméterek:**
+**Parameters:**
 
-| Név | Típus | Kötelező | Leírás |
-|-----|-------|----------|--------|
-| `query` | string | igen | Keresési kifejezés (lásd formátumok lent) |
-| `fileGlob` | string | nem | Fájlszűrő glob (pl. `**/*.go`) |
-| `maxResults` | int | nem | Max találat (alapértelmezett: 50) |
-| `contextLines` | int | nem | Kontextus sorok a találat előtt/után (alapértelmezett: 2) |
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `query` | string | yes | Search query (see formats below) |
+| `filePath` | string | no | Exact relative path to search in a single file (overrides `fileGlob`) |
+| `fileGlob` | string | no | Glob pattern to filter files (e.g. `**/*.go`) |
+| `maxResults` | int | no | Maximum number of file results (default: 50) |
+| `contextLines` | int | no | Context lines before/after each match (default: 2) |
 
-**Query formátumok:**
+**Query formats:**
 
-| Formátum | Példa | Viselkedés |
-|----------|-------|------------|
-| Sima szöveg | `handleRequest` | Szó-szintű keresés (Bleve MatchQuery) |
-| `"idézőjelben"` | `"func main"` | Pontos kifejezés keresés (PhraseQuery) |
-| `/regex/` | `/func\s+\w+Handler/` | Reguláris kifejezés (RegexpQuery) |
+| Format | Example | Behavior |
+|--------|---------|----------|
+| Plain text | `handleRequest` | Word-level matching (Bleve MatchQuery) |
+| `"quoted"` | `"func main"` | Exact phrase matching (PhraseQuery) |
+| `/regex/` | `/func\s+\w+Handler/` | Regular expression (RegexpQuery) |
 
-**Példa kimenet:**
+**Example output:**
 
 ```
 Found 3 matches in 2 files:
@@ -147,28 +146,19 @@ Found 3 matches in 2 files:
   16: }
 ```
 
-### 2. `codeindex_files` — Fájl keresés
+### 2. `codeindex_files` — File search
 
-Glob-alapú fájlkeresés az indexelt fájlok között.
+Glob-based file search across the index.
 
-**Paraméterek:**
+**Parameters:**
 
-| Név | Típus | Kötelező | Leírás |
-|-----|-------|----------|--------|
-| `pattern` | string | igen | Glob minta (pl. `**/*.ts`, `src/**/*.go`) |
-| `nameOnly` | bool | nem | Ha `true`, csak elérési utakat ad vissza metaadatok nélkül |
-| `maxResults` | int | nem | Max találat (alapértelmezett: 50) |
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `pattern` | string | yes | Glob pattern (e.g. `**/*.ts`, `src/**/*.go`) |
+| `nameOnly` | bool | no | If `true`, return only file paths without metadata |
+| `maxResults` | int | no | Maximum number of results (default: 50) |
 
-**Glob minták:**
-
-| Minta | Jelentés |
-|-------|----------|
-| `**/*.go` | Minden Go fájl, bármely alkönyvtárban |
-| `src/**/*.ts` | TypeScript fájlok a `src/` alatt |
-| `**/test_*.py` | Python teszt fájlok bárhol |
-| `*.json` | JSON fájlok csak a gyökérben |
-
-**Példa kimenet:**
+**Example output:**
 
 ```
 Found 4 files:
@@ -179,18 +169,41 @@ Found 4 files:
   src/config/config.go  (Go, 892 B, 31 lines)
 ```
 
-### 3. `codeindex_status` — Index állapot
+### 3. `codeindex_read` — Read file from index
 
-Megjeleníti az index aktuális állapotát.
+Read a file's contents directly from the in-memory index. Zero disk I/O — faster than the built-in Read tool.
 
-**Paraméterek:** nincs
+**Parameters:**
 
-**Példa kimenet:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `filePath` | string | yes | Relative file path to read (e.g. `src/main.go`) |
+
+**Example output:**
+
+```
+── src/main.go (12 lines) ──
+ 1│ package main
+ 2│
+ 3│ import "fmt"
+ 4│
+ 5│ func main() {
+ 6│     fmt.Println("hello")
+ 7│ }
+```
+
+### 4. `codeindex_status` — Index status
+
+Display current index statistics.
+
+**Parameters:** none
+
+**Example output:**
 
 ```
 === codeindex-mcp Status ===
 
-Root directory: C:\projects\my-project
+Root directory: /home/user/myproject
 Uptime: 45s
 Indexed files: 1234
 Content-indexed documents: 1234
@@ -202,19 +215,15 @@ Languages:
   Go                   312 files
   JavaScript           189 files
   Python               98 files
-  JSON                 67 files
-  YAML                 45 files
-  Markdown             34 files
-  Unknown              33 files
 ```
 
-### 4. `codeindex_reindex` — Újraindexelés
+### 5. `codeindex_reindex` — Force reindex
 
-Teljes újraindexelés — törli az indexet és újra felépíti a nulláról.
+Clear the index and rebuild from scratch. Also reloads `.gitignore` and `.claudeignore` rules.
 
-**Paraméterek:** nincs
+**Parameters:** none
 
-**Példa kimenet:**
+**Example output:**
 
 ```
 Reindex complete.
@@ -223,89 +232,86 @@ Reindex complete.
   Duration: 1.234s
 ```
 
-## Ignore rendszer
+## Ignore system
 
-A szerver háromrétegű szűrési rendszert használ annak eldöntésére, hogy mely fájlok kerüljenek az indexbe:
+The server uses a multi-layered filtering system to determine which files to index:
 
-### 1. Beépített alapértelmezett minták
+### 1. Built-in default patterns
 
-Automatikusan kihagyva, konfigurálás nélkül:
+Automatically skipped without any configuration:
 
-| Kategória | Minták |
-|-----------|--------|
-| Verziókezelés | `.git`, `.svn`, `.hg` |
-| Függőségek | `node_modules`, `vendor`, `bower_components`, `.yarn` |
-| Build kimenet | `dist`, `build`, `out`, `target`, `bin`, `obj` |
-| IDE fájlok | `.idea`, `.vscode`, `.vs` |
-| Binárisok | `*.exe`, `*.dll`, `*.so`, `*.dylib`, `*.class`, `*.jar` |
-| Képek | `*.png`, `*.jpg`, `*.gif`, `*.webp`, `*.ico` |
-| Betűtípusok | `*.woff`, `*.woff2`, `*.ttf`, `*.eot` |
-| Média | `*.mp3`, `*.mp4`, `*.avi`, `*.mov` |
-| Dokumentumok | `*.pdf`, `*.doc`, `*.xlsx`, `*.pptx` |
-| Lock fájlok | `package-lock.json`, `yarn.lock`, `go.sum`, `Cargo.lock` |
-| Tömörített | `*.zip`, `*.tar`, `*.tar.gz`, `*.rar`, `*.7z` |
-| Minifikált | `*.min.js`, `*.min.css` |
-| Source map | `*.map` |
+| Category | Patterns |
+|----------|----------|
+| Version control | `.git`, `.svn`, `.hg` |
+| Dependencies | `node_modules`, `vendor`, `bower_components`, `.yarn` |
+| Build output | `dist`, `build`, `out`, `target`, `bin`, `obj` |
+| IDE files | `.idea`, `.vscode`, `.vs` |
+| Binaries | `*.exe`, `*.dll`, `*.so`, `*.dylib`, `*.class`, `*.jar` |
+| Images | `*.png`, `*.jpg`, `*.gif`, `*.webp`, `*.ico` |
+| Fonts | `*.woff`, `*.woff2`, `*.ttf`, `*.eot` |
+| Media | `*.mp3`, `*.mp4`, `*.avi`, `*.mov` |
+| Documents | `*.pdf`, `*.doc`, `*.xlsx`, `*.pptx` |
+| Lock files | `package-lock.json`, `yarn.lock`, `go.sum`, `Cargo.lock` |
+| Archives | `*.zip`, `*.tar`, `*.tar.gz`, `*.rar`, `*.7z` |
+| Minified | `*.min.js`, `*.min.css` |
+| Source maps | `*.map` |
 | Cache | `.cache`, `.next`, `.nuxt`, `.parcel-cache` |
-| Naplók | `*.log` |
-| Adatbázis | `*.sqlite`, `*.sqlite3`, `*.db` |
+| Logs | `*.log` |
+| Database | `*.sqlite`, `*.sqlite3`, `*.db` |
 
-### 2. `.gitignore` támogatás
+### 2. `.gitignore` support
 
-A projekt gyökerében lévő `.gitignore` fájl mintáit teljes mértékben figyelembe veszi, beleértve:
-- Glob minták (`*.generated.go`, `build/`)
-- Negáció (`!important.log`)
-- Könyvtár-specifikus minták (`docs/internal/`)
+Fully respects `.gitignore` patterns in the project root, including globs, negation (`!important.log`), and directory-specific patterns.
 
-### 3. `.claudeignore` támogatás
+### 3. `.claudeignore` support
 
-A `.gitignore`-hoz hasonló szintaxissal működő `.claudeignore` fájl a projekt gyökerében. Ez lehetővé teszi, hogy a kód indexelésből kizárj olyan fájlokat, amelyeket a git-ből nem akarsz kizárni, de a Claude számára nem relevánsak.
+A `.claudeignore` file in the project root uses the same syntax as `.gitignore`. Use it to exclude files from the index that you want in git but are not relevant for AI code search.
 
-Példa `.claudeignore`:
+Example `.claudeignore`:
 ```
-# Generált fájlok - Claude-nak nem kell látnia
+# Generated files
 *.generated.go
 *.pb.go
 
-# Teszt fixture-ök (túl nagy fájlok)
+# Large test fixtures
 testdata/large/
 
-# Régi migráciök
+# Archived migrations
 migrations/archive/
 ```
 
-### 4. CLI `--exclude` minták
+### 4. CLI `--exclude` patterns
 
-Futásidejű kizárás az `--exclude` flag-gel:
+Runtime exclusions via the `--exclude` flag:
 
 ```bash
-./codeindex-mcp.exe --exclude "*.generated.go" --exclude "vendor/"
+./codeindex-mcp --exclude "*.generated.go" --exclude "vendor/"
 ```
 
-### 5. Bináris fájl detektálás
+### 5. Binary file detection
 
-A fájl első 512 byte-ját vizsgálja null byte-okra. Ha talál, a fájlt binárisnak tekinti és kihagyja az indexelésből. Ez a `.gitignore`-tól független védelem.
+Scans the first 512 bytes of each file for null bytes. If found, the file is treated as binary and skipped. This works independently of `.gitignore`.
 
-### 6. Fájlméret korlát
+### 6. File size limit
 
-Az `--max-file-size` paraméterrel állítható (alapértelmezés: 1 MB). Az ennél nagyobb fájlok kimaradnak.
+Configurable via `--max-file-size` (default: 1 MB). Files larger than this are skipped.
 
-### Prioritás
+### Priority
 
-A szűrők sorrendje:
-1. Beépített minták (legmagasabb prioritás, mindig érvényes)
-2. `.gitignore` szabályok
-3. `.claudeignore` szabályok
-4. CLI `--exclude` minták
-5. Bináris detektálás
-6. Fájlméret korlát
+Filters are applied in order:
+1. Built-in patterns (highest priority, always active)
+2. `.gitignore` rules
+3. `.claudeignore` rules
+4. CLI `--exclude` patterns
+5. Binary detection
+6. File size limit
 
-Ha bármelyik szűrő igaz, a fájl kimarad.
+If any filter matches, the file is excluded.
 
-## Architektúra
+## Architecture
 
 ```
-Claude Code (stdio) <──> MCP Server <──> Index Engine
+MCP Client (stdio) <──> MCP Server <──> Index Engine
                                             │
                                     ┌───────┼────────┐
                                     │       │        │
@@ -313,93 +319,92 @@ Claude Code (stdio) <──> MCP Server <──> Index Engine
                                (full-text) (path)  (fsnotify)
 ```
 
-### Két párhuzamos index
+### Dual index design
 
-| Index | Technológia | Funkció |
-|-------|-------------|---------|
-| **Content Index** | Bleve `NewMemOnly()` | Full-text keresés fájltartalomban (inverted index) |
-| **File Path Index** | Go `map` + sorted slice | Fájlnév/útvonal keresés glob mintákkal |
+| Index | Technology | Purpose |
+|-------|-----------|---------|
+| **Content Index** | Bleve `NewMemOnly()` | Full-text search over file contents (inverted index) |
+| **File Path Index** | Go `map` + sorted slice | File name/path search with glob patterns |
 
-### File Watcher
+### File watcher
 
-- **fsnotify** könyvtár, Windows-on `ReadDirectoryChangesW` API-t használ
-- Rekurzív: induláskor minden alkönyvtárat figyel
-- **100ms debounce ablak**: az editorok (VS Code, stb.) mentéskor több event-et generálnak, ezeket összevonja
-- Új könyvtár létrehozásakor automatikusan hozzáadja a watcherhez
-- `.gitignore` vagy `.claudeignore` változásakor automatikusan újratölti a szűrési szabályokat
+- Uses **fsnotify** (on Windows: `ReadDirectoryChangesW` API)
+- Recursive: watches all non-ignored subdirectories at startup
+- **100ms debounce window**: editors generate multiple events on save — these are collapsed into one
+- Automatically watches newly created directories
+- Automatically reloads ignore rules when `.gitignore` or `.claudeignore` changes
 
-### Indulási folyamat
+### Startup sequence
 
-1. CLI flagek feldolgozása
-2. Ignore matcher létrehozása (beépített + .gitignore + .claudeignore + CLI minták)
-3. Bleve in-memory index és file path index inicializálása
-4. Párhuzamos indexelés 8 worker goroutine-nal
-5. File watcher indítása
-6. MCP szerver indítása stdio transport-on
+1. Parse CLI flags
+2. Create ignore matcher (built-in + .gitignore + .claudeignore + CLI patterns)
+3. Initialize Bleve in-memory index and file path index
+4. Parallel indexing with 8 worker goroutines
+5. Start file watcher
+6. Start MCP server on stdio transport
 
-## Projekt struktúra
+## Project structure
 
 ```
 codeindex-mcp/
-├── main.go                  # Belépési pont, CLI flagek, komponensek összekötése
-├── go.mod / go.sum          # Go modul definíció
-├── CLAUDE.md                # AI-optimalizált kódolási alapelvek
-├── .gitignore
+├── main.go                  # Entry point, CLI flags, component wiring
+├── indexing.go              # Directory walking, parallel indexing, watcher events
 ├── server/
-│   └── server.go            # MCP szerver beállítás, tool regisztráció
+│   └── server.go            # MCP server setup, tool registration
 ├── index/
-│   ├── content.go           # Bleve content index (full-text keresés)
+│   ├── content.go           # Bleve content index (CRUD operations)
+│   ├── content_search.go    # Full-text search logic, query parsing
 │   ├── content_test.go
-│   ├── document.go          # IndexedFile struktúra
-│   ├── files.go             # File path index (glob keresés)
+│   ├── files.go             # File path index (glob search) + IndexedFile type
 │   └── files_test.go
 ├── watcher/
-│   ├── watcher.go           # Rekurzív fsnotify wrapper
-│   └── debouncer.go         # 100ms event összevonás
+│   ├── watcher.go           # Recursive fsnotify wrapper
+│   └── debouncer.go         # 100ms event collapsing
 ├── ignore/
-│   ├── ignore.go            # .gitignore + .claudeignore + custom minták
+│   ├── ignore.go            # .gitignore + .claudeignore + custom patterns
 │   ├── ignore_test.go
-│   └── defaults.go          # Beépített ignore minták
+│   └── defaults.go          # Built-in ignore patterns
 ├── tools/
-│   ├── search.go            # codeindex_search tool handler
-│   ├── files.go             # codeindex_files tool handler
-│   ├── status.go            # codeindex_status tool handler
-│   ├── reindex.go           # codeindex_reindex tool handler
-│   └── format.go            # Kimenet formázás
+│   ├── search.go            # codeindex_search handler
+│   ├── files.go             # codeindex_files handler
+│   ├── read.go              # codeindex_read handler
+│   ├── status.go            # codeindex_status handler
+│   ├── reindex.go           # codeindex_reindex handler
+│   └── format.go            # Output formatting
 └── language/
-    ├── detect.go            # Kiterjesztés → nyelv leképezés (70+)
+    ├── detect.go            # Extension → language mapping (70+)
     ├── detect_test.go
-    ├── binary.go            # Bináris fájl detektálás
+    ├── binary.go            # Binary file detection
     └── binary_test.go
 ```
 
-## Függőségek
+## Dependencies
 
-| Könyvtár | Verzió | Funkció |
-|----------|--------|---------|
-| [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | v1.3.0 | MCP szerver (stdio transport) |
+| Library | Version | Purpose |
+|---------|---------|---------|
+| [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | v1.3.0 | MCP server (stdio transport) |
 | [blevesearch/bleve/v2](https://github.com/blevesearch/bleve) | v2.5.7 | In-memory full-text search |
 | [fsnotify/fsnotify](https://github.com/fsnotify/fsnotify) | v1.9.0 | File system watching |
 | [bmatcuk/doublestar/v4](https://github.com/bmatcuk/doublestar) | v4.10.0 | `**` glob support |
 | [denormal/go-gitignore](https://github.com/denormal/go-gitignore) | latest | .gitignore / .claudeignore parsing |
 
-## Teljesítmény
+## Performance
 
-| Metrika | ~5k fájl | ~10k fájl |
-|---------|----------|-----------|
-| Indulási indexelés | ~1-2s | ~2-3s |
-| Memóriahasználat | ~75-100 MB | ~180-230 MB |
-| Szöveges keresés | <5ms | <10ms |
-| Regex keresés | <50ms | <50ms |
-| Glob keresés | <2ms | <5ms |
-| Inkrementális update | <10ms/fájl | <10ms/fájl |
+| Metric | ~5k files | ~10k files |
+|--------|-----------|------------|
+| Initial indexing | ~1-2s | ~2-3s |
+| Memory usage | ~75-100 MB | ~180-230 MB |
+| Text search | <5ms | <10ms |
+| Regex search | <50ms | <50ms |
+| Glob search | <2ms | <5ms |
+| Incremental update | <10ms/file | <10ms/file |
 
-## Támogatott nyelvek
+## Supported languages
 
-A nyelv-felismerés 70+ kiterjesztést ismer fel, többek között:
+Language detection recognizes 70+ file extensions, including:
 
-Go, TypeScript, JavaScript, Python, Rust, Java, Kotlin, C, C++, C#, Swift, Dart, Ruby, PHP, Shell, PowerShell, HTML, CSS, SCSS, Sass, Less, JSON, YAML, TOML, XML, SQL, GraphQL, Protobuf, Terraform, Lua, R, Scala, Elixir, Erlang, Haskell, Zig, Vue, Svelte, Markdown, Dockerfile, Makefile, CMake, Batch, és még sok más.
+Go, TypeScript, JavaScript, Python, Rust, Java, Kotlin, C, C++, C#, Swift, Dart, Ruby, PHP, Shell, PowerShell, HTML, CSS, SCSS, Sass, Less, JSON, YAML, TOML, XML, SQL, GraphQL, Protobuf, Terraform, Lua, R, Scala, Elixir, Erlang, Haskell, Zig, Vue, Svelte, Markdown, Dockerfile, Makefile, CMake, Batch, and more.
 
-## Licenc
+## License
 
-MIT
+[MIT](LICENSE)

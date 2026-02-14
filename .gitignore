@@ -1,0 +1,17 @@
+# Binary
+codeindex-mcp.exe
+codeindex-mcp.exe~
+codeindex-mcp
+
+# Log
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

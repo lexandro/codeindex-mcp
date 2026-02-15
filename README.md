@@ -79,6 +79,7 @@ Claude Code will then automatically use `codeindex_search`, `codeindex_files`, `
 |------|---------|-------------|
 | `--root DIR` | current directory | Project root directory to index |
 | `--exclude PATTERN` | _(none)_ | Extra ignore pattern, repeatable (e.g. `--exclude "*.generated.go" --exclude "vendor/"`) |
+| `--force-include PATTERN` | _(none)_ | Force-include pattern that overrides all excludes, repeatable (e.g. `--force-include "*.log"`) |
 | `--max-file-size N` | `1048576` (1 MB) | Maximum file size in bytes; larger files are skipped |
 | `--max-results N` | `50` | Default maximum number of search results |
 | `--log-level LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
@@ -94,6 +95,17 @@ Claude Code will then automatically use `codeindex_search`, `codeindex_files`, `
 ./codeindex-mcp --root ~/myproject \
   --exclude "*.generated.go" \
   --exclude "testdata/"
+
+# Force-include log files (overrides the default *.log exclusion)
+./codeindex-mcp --root . --force-include "*.log"
+
+# Multiple force-include patterns (additive)
+./codeindex-mcp --root . --force-include "*.log" --force-include "vendor/*.go"
+
+# Combine exclude and force-include
+./codeindex-mcp --root ~/myproject \
+  --exclude "*.generated.go" \
+  --force-include "*.log"
 
 # Debug logging to a specific file
 ./codeindex-mcp --root . --log-level debug --log-file /tmp/codeindex.log
@@ -288,25 +300,40 @@ Runtime exclusions via the `--exclude` flag:
 ./codeindex-mcp --exclude "*.generated.go" --exclude "vendor/"
 ```
 
-### 5. Binary file detection
+### 5. CLI `--force-include` patterns
+
+Force-include patterns override **all** exclude rules (built-in defaults, `.gitignore`, `.claudeignore`, and `--exclude`). Multiple `--force-include` flags are additive. Binary detection and file size limits still apply.
+
+```bash
+# Index *.log files even though they are excluded by default
+./codeindex-mcp --force-include "*.log"
+
+# Force-include vendor Go files while still excluding the rest of vendor/
+./codeindex-mcp --force-include "vendor/*.go"
+```
+
+When force-include patterns are active, directories that might contain matching files are not pruned during traversal. The `.git` directory is always skipped regardless of force-include patterns.
+
+### 6. Binary file detection
 
 Scans the first 512 bytes of each file for null bytes. If found, the file is treated as binary and skipped. This works independently of `.gitignore`.
 
-### 6. File size limit
+### 7. File size limit
 
 Configurable via `--max-file-size` (default: 1 MB). Files larger than this are skipped.
 
 ### Priority
 
 Filters are applied in order:
-1. Built-in patterns (highest priority, always active)
-2. `.gitignore` rules
-3. `.claudeignore` rules
-4. CLI `--exclude` patterns
-5. Binary detection
-6. File size limit
+1. **`--force-include` patterns** (highest priority — if matched, the file is included regardless of rules 2–5)
+2. Built-in default patterns
+3. `.gitignore` rules
+4. `.claudeignore` rules
+5. CLI `--exclude` patterns
+6. Binary detection (always applies, even for force-included files)
+7. File size limit (always applies, even for force-included files)
 
-If any filter matches, the file is excluded.
+If a force-include pattern matches, the file bypasses all exclude rules (2–5). Binary detection and file size limits are safety checks that always apply.
 
 ## Architecture
 

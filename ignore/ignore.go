@@ -13,27 +13,30 @@ import (
 // It combines default patterns, .gitignore rules, .claudeignore rules, and custom CLI patterns.
 // Thread-safe: Reload() acquires a write lock, ShouldIgnore()/ShouldIgnoreDir() acquire a read lock.
 type Matcher struct {
-	mu               sync.RWMutex
-	rootDir          string
-	gitIgnore        gitignore.GitIgnore
-	claudeIgnore     gitignore.GitIgnore
-	customPatterns   []string
-	maxFileSizeBytes int64
+	mu                   sync.RWMutex
+	rootDir              string
+	gitIgnore            gitignore.GitIgnore
+	claudeIgnore         gitignore.GitIgnore
+	customPatterns       []string
+	forceIncludePatterns []string
+	maxFileSizeBytes     int64
 }
 
 // MatcherOptions configures the ignore matcher.
 type MatcherOptions struct {
-	RootDir          string
-	CustomPatterns   []string
-	MaxFileSizeBytes int64
+	RootDir              string
+	CustomPatterns       []string
+	ForceIncludePatterns []string
+	MaxFileSizeBytes     int64
 }
 
 // NewMatcher creates an ignore matcher that checks default patterns, .gitignore, .claudeignore, and custom patterns.
 func NewMatcher(options MatcherOptions) *Matcher {
 	matcher := &Matcher{
-		rootDir:          options.RootDir,
-		customPatterns:   options.CustomPatterns,
-		maxFileSizeBytes: options.MaxFileSizeBytes,
+		rootDir:              options.RootDir,
+		customPatterns:       options.CustomPatterns,
+		forceIncludePatterns: options.ForceIncludePatterns,
+		maxFileSizeBytes:     options.MaxFileSizeBytes,
 	}
 
 	if matcher.maxFileSizeBytes <= 0 {
@@ -62,6 +65,11 @@ func (m *Matcher) ShouldIgnore(absolutePath string) bool {
 	}
 	// Normalize to forward slashes for consistent matching
 	relativePath = filepath.ToSlash(relativePath)
+
+	// Force-include overrides ALL exclude rules
+	if m.matchesForceIncludePatterns(relativePath) {
+		return false
+	}
 
 	// Check default patterns
 	if m.matchesDefaultPatterns(relativePath, absolutePath) {
@@ -102,9 +110,32 @@ func (m *Matcher) ShouldIgnore(absolutePath string) bool {
 func (m *Matcher) ShouldIgnoreDir(absolutePath string) bool {
 	dirName := filepath.Base(absolutePath)
 
-	// Fast check: common directories that should always be skipped (no lock needed)
+	// .git is ALWAYS pruned — no force-include can override this
+	if dirName == ".git" {
+		return true
+	}
+
+	// If force-include patterns exist, check if this directory could contain force-included files.
+	// If it could, don't prune it even if it would normally be ignored.
+	m.mu.RLock()
+	hasForceIncludes := len(m.forceIncludePatterns) > 0
+	m.mu.RUnlock()
+
+	if hasForceIncludes {
+		relativePath, err := filepath.Rel(m.rootDir, absolutePath)
+		if err != nil {
+			relativePath = absolutePath
+		}
+		relativePath = filepath.ToSlash(relativePath)
+
+		if m.couldContainForceIncluded(relativePath) {
+			return false
+		}
+	}
+
+	// Fast check: common directories that should always be skipped
 	switch dirName {
-	case ".git", ".svn", ".hg", "node_modules", "__pycache__",
+	case ".svn", ".hg", "node_modules", "__pycache__",
 		".idea", ".vscode", ".vs", ".next", ".nuxt",
 		".cache", ".parcel-cache", "coverage", ".nyc_output", "htmlcov",
 		".venv", "venv", ".env":
@@ -176,6 +207,47 @@ func (m *Matcher) matchesCustomPatterns(relativePath string) bool {
 		baseName := filepath.Base(relativePath)
 		matched, err = filepath.Match(pattern, baseName)
 		if err == nil && matched {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesForceIncludePatterns checks if the path matches any force-include pattern.
+// Force-include patterns override ALL exclude rules (default, .gitignore, .claudeignore, custom).
+func (m *Matcher) matchesForceIncludePatterns(relativePath string) bool {
+	for _, pattern := range m.forceIncludePatterns {
+		// Try matching against relative path
+		matched, err := filepath.Match(pattern, relativePath)
+		if err == nil && matched {
+			return true
+		}
+
+		// Try matching against basename
+		baseName := filepath.Base(relativePath)
+		matched, err = filepath.Match(pattern, baseName)
+		if err == nil && matched {
+			return true
+		}
+	}
+	return false
+}
+
+// couldContainForceIncluded returns true if the directory might contain files matching force-include patterns.
+// This prevents premature directory pruning when force-include patterns are active.
+func (m *Matcher) couldContainForceIncluded(relativeDirPath string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, pattern := range m.forceIncludePatterns {
+		// Pattern without directory component (e.g. "*.log") — could match files in ANY directory
+		if !strings.Contains(pattern, "/") {
+			return true
+		}
+
+		// Pattern has directory prefix (e.g. "vendor/*.go") — check if this dir is a prefix of the pattern's dir
+		patternDir := pattern[:strings.LastIndex(pattern, "/")]
+		if strings.HasPrefix(patternDir, relativeDirPath) || strings.HasPrefix(relativeDirPath, patternDir) {
 			return true
 		}
 	}

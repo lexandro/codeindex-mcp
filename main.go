@@ -27,6 +27,15 @@ func (e *excludePatterns) Set(value string) error {
 	return nil
 }
 
+// forceIncludePatterns is a repeatable CLI flag for force-include patterns that override all excludes.
+type forceIncludePatterns []string
+
+func (f *forceIncludePatterns) String() string { return strings.Join(*f, ", ") }
+func (f *forceIncludePatterns) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
 func main() {
 	// Parse CLI flags
 	var rootDir string
@@ -35,9 +44,11 @@ func main() {
 	var logLevel string
 	var logFile string
 	var excludes excludePatterns
+	var forceIncludes forceIncludePatterns
 
 	flag.StringVar(&rootDir, "root", "", "Project root directory (default: current working directory)")
 	flag.Var(&excludes, "exclude", "Extra ignore pattern (repeatable)")
+	flag.Var(&forceIncludes, "force-include", "Force-include pattern that overrides all excludes (repeatable)")
 	flag.Int64Var(&maxFileSizeBytes, "max-file-size", 1024*1024, "Maximum file size in bytes (default: 1MB)")
 	flag.IntVar(&maxResults, "max-results", 50, "Default max search results (default: 50)")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level: debug|info|warn|error")
@@ -67,15 +78,17 @@ func main() {
 		"root", rootDir,
 		"maxFileSize", maxFileSizeBytes,
 		"maxResults", maxResults,
+		"forceIncludes", []string(forceIncludes),
 	)
 
 	startTime := time.Now()
 
 	// Create ignore matcher
 	ignoreMatcher := ignore.NewMatcher(ignore.MatcherOptions{
-		RootDir:          rootDir,
-		CustomPatterns:   excludes,
-		MaxFileSizeBytes: maxFileSizeBytes,
+		RootDir:              rootDir,
+		CustomPatterns:       excludes,
+		ForceIncludePatterns: forceIncludes,
+		MaxFileSizeBytes:     maxFileSizeBytes,
 	})
 
 	// Create indexes

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -43,6 +44,8 @@ func main() {
 	var maxResults int
 	var logLevel string
 	var logFile string
+	var logEnabled bool
+	var syncInterval int
 	var excludes excludePatterns
 	var forceIncludes forceIncludePatterns
 
@@ -52,8 +55,15 @@ func main() {
 	flag.Int64Var(&maxFileSizeBytes, "max-file-size", 1024*1024, "Maximum file size in bytes (default: 1MB)")
 	flag.IntVar(&maxResults, "max-results", 50, "Default max search results (default: 50)")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level: debug|info|warn|error")
-	flag.StringVar(&logFile, "log-file", "", "Log file path (default: stderr)")
+	flag.StringVar(&logFile, "log-file", "", "Log file path (default: codeindex-mcp.log in root dir)")
+	flag.BoolVar(&logEnabled, "log-enabled", true, "Enable logging (default: true, set to false to disable all logging)")
+	flag.IntVar(&syncInterval, "sync-interval", 0, "Periodic sync interval in seconds (0 = disabled)")
 	flag.Parse()
+
+	if syncInterval < 0 {
+		fmt.Fprintf(os.Stderr, "Error: --sync-interval must be >= 0\n")
+		os.Exit(1)
+	}
 
 	// Resolve root directory
 	if rootDir == "" {
@@ -66,13 +76,20 @@ func main() {
 	}
 	rootDir, _ = filepath.Abs(rootDir)
 
-	// Default log file: codeindex-mcp.log in the root directory
-	if logFile == "" {
-		logFile = filepath.Join(rootDir, "codeindex-mcp.log")
-	}
-
 	// Setup logger (always to file or stderr, never to stdout - stdout is for MCP stdio)
-	logger := setupLogger(logLevel, logFile)
+	var logger *slog.Logger
+	if !logEnabled {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	} else {
+		if logFile == "" {
+			logFile = filepath.Join(rootDir, "codeindex-mcp.log")
+		}
+		var logFileHandle *os.File
+		logger, logFileHandle = setupLogger(logLevel, logFile)
+		if logFileHandle != nil {
+			defer logFileHandle.Close()
+		}
+	}
 
 	logger.Info("starting codeindex-mcp",
 		"root", rootDir,
@@ -119,6 +136,14 @@ func main() {
 		defer fileWatcher.Close()
 	}
 
+	// Start periodic sync if configured
+	var syncStop chan struct{}
+	if syncInterval > 0 {
+		syncStop = make(chan struct{})
+		go runPeriodicSync(syncInterval, rootDir, fileIndex, contentIndex, ignoreMatcher, logger, syncStop)
+		defer close(syncStop)
+	}
+
 	// Create tool handlers
 	searchHandler := &tools.SearchHandler{ContentIndex: contentIndex, Logger: logger}
 	filesHandler := &tools.FilesHandler{FileIndex: fileIndex, Logger: logger}
@@ -157,7 +182,8 @@ func main() {
 }
 
 // setupLogger creates an slog.Logger writing to stderr or a file.
-func setupLogger(level string, logFile string) *slog.Logger {
+// Returns the logger and the opened file (nil if using stderr), so the caller can defer Close().
+func setupLogger(level string, logFile string) (*slog.Logger, *os.File) {
 	var logLevel slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
@@ -171,6 +197,7 @@ func setupLogger(level string, logFile string) *slog.Logger {
 	}
 
 	var writer *os.File
+	var openedFile *os.File
 	if logFile != "" {
 		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
@@ -178,11 +205,12 @@ func setupLogger(level string, logFile string) *slog.Logger {
 			writer = os.Stderr
 		} else {
 			writer = f
+			openedFile = f
 		}
 	} else {
 		writer = os.Stderr
 	}
 
 	handler := slog.NewTextHandler(writer, &slog.HandlerOptions{Level: logLevel})
-	return slog.New(handler)
+	return slog.New(handler), openedFile
 }

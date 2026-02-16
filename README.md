@@ -82,8 +82,10 @@ Claude Code will then automatically use `codeindex_search`, `codeindex_files`, `
 | `--force-include PATTERN` | _(none)_ | Force-include pattern that overrides all excludes, repeatable (e.g. `--force-include "*.log"`) |
 | `--max-file-size N` | `1048576` (1 MB) | Maximum file size in bytes; larger files are skipped |
 | `--max-results N` | `50` | Default maximum number of search results |
+| `--log-enabled` | `true` | Enable logging (`false` disables all log output, no log file is created) |
 | `--log-level LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `--log-file PATH` | `<root>/codeindex-mcp.log` | Log file path |
+| `--sync-interval N` | `0` (disabled) | Periodic index sync verification interval in seconds (0 = disabled) |
 
 ### Examples
 
@@ -107,8 +109,14 @@ Claude Code will then automatically use `codeindex_search`, `codeindex_files`, `
   --exclude "*.generated.go" \
   --force-include "*.log"
 
+# Disable logging entirely (no log file created)
+./codeindex-mcp --root . --log-enabled=false
+
 # Debug logging to a specific file
 ./codeindex-mcp --root . --log-level debug --log-file /tmp/codeindex.log
+
+# Enable periodic sync verification every 5 minutes
+./codeindex-mcp --root . --sync-interval 300
 
 # Allow larger files (5 MB)
 ./codeindex-mcp --root . --max-file-size 5242880
@@ -376,6 +384,7 @@ MCP Client (stdio) <──> MCP Server <──> Index Engine
 codeindex-mcp/
 ├── main.go                  # Entry point, CLI flags, component wiring
 ├── indexing.go              # Directory walking, parallel indexing, watcher events
+├── sync.go                  # Periodic background index sync verification
 ├── server/
 │   └── server.go            # MCP server setup, tool registration
 ├── index/

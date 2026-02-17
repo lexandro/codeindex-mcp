@@ -1,5 +1,12 @@
 # codeindex-mcp
 
+[![CI](https://github.com/lexandro/codeindex-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/lexandro/codeindex-mcp/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/lexandro/codeindex-mcp)](https://goreportcard.com/report/github.com/lexandro/codeindex-mcp)
+[![Go Reference](https://pkg.go.dev/badge/github.com/lexandro/codeindex-mcp.svg)](https://pkg.go.dev/github.com/lexandro/codeindex-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io/)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-Extension-blueviolet)](https://docs.anthropic.com/en/docs/claude-code)
+
 In-memory [MCP](https://modelcontextprotocol.io/) server for source code indexing. A fast, indexed replacement for `grep` and `find`, designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and any MCP-compatible client.
 
 ## Why?

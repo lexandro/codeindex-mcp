@@ -24,6 +24,7 @@ In-memory MCP server for source code indexing. Replaces grep/find with fast inde
 - `watcher/` - Recursive fsnotify wrapper with debouncing
 - `ignore/` - .gitignore + .claudeignore + default + custom ignore patterns + force-include overrides
 - `tools/` - MCP tool handlers (search, files, status, reindex, read)
+- `register/` - `register` subcommand: auto-registers server in Claude Code config files
 - `language/` - File extension to language mapping, binary detection
 
 ## AI-Optimized Coding Principles

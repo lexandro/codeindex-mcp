@@ -13,6 +13,7 @@ import (
 
 	"github.com/lexandro/codeindex-mcp/ignore"
 	"github.com/lexandro/codeindex-mcp/index"
+	"github.com/lexandro/codeindex-mcp/register"
 	"github.com/lexandro/codeindex-mcp/server"
 	"github.com/lexandro/codeindex-mcp/tools"
 	"github.com/lexandro/codeindex-mcp/watcher"
@@ -38,6 +39,12 @@ func (f *forceIncludePatterns) Set(value string) error {
 }
 
 func main() {
+	// Handle register subcommand before flag parsing
+	if len(os.Args) > 1 && os.Args[1] == "register" {
+		register.Run(register.DeriveServerName(os.Args[0]), os.Args[2:])
+		return
+	}
+
 	// Parse CLI flags
 	var rootDir string
 	var maxFileSizeBytes int64
@@ -90,6 +97,8 @@ func main() {
 			defer logFileHandle.Close()
 		}
 	}
+
+	fmt.Fprintf(os.Stderr, "Tip: run \"codeindex-mcp register project .\" to auto-register in Claude Code\n")
 
 	logger.Info("starting codeindex-mcp",
 		"root", rootDir,

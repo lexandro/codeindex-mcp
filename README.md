@@ -11,6 +11,22 @@ In-memory [MCP](https://modelcontextprotocol.io/) server for source code indexin
 - **Configurable filtering** — respects `.gitignore`, `.claudeignore`, and custom exclude patterns
 - **Zero runtime dependencies** — single static Go binary (~17 MB)
 
+## Quick start
+
+```bash
+git clone https://github.com/lexandro/codeindex-mcp.git
+cd codeindex-mcp
+go build -o codeindex-mcp .
+
+# Register for a project (creates .mcp.json)
+./codeindex-mcp register project /path/to/your/project
+
+# Or register globally for all projects (updates ~/.claude.json)
+./codeindex-mcp register user
+```
+
+That's it — Claude Code will automatically discover and use the indexed search tools.
+
 ## Installation
 
 ### Prerequisites
@@ -26,6 +42,23 @@ go build -o codeindex-mcp .
 ```
 
 On Windows this produces `codeindex-mcp.exe`.
+
+### Register in Claude Code
+
+After building, register the server so Claude Code can find it:
+
+```bash
+# Project-specific (writes .mcp.json in the target directory)
+./codeindex-mcp register project /path/to/your/project
+
+# Global (writes ~/.claude.json — available in all projects)
+./codeindex-mcp register user
+
+# With extra server flags
+./codeindex-mcp register project . -- --max-file-size 5242880 --exclude "vendor/"
+```
+
+The `register` command auto-detects the binary path and creates the correct config entry, including the `cmd /C` wrapper on Windows.
 
 ### Run tests
 
@@ -45,20 +78,20 @@ The server communicates over stdio (stdin/stdout) using the MCP protocol, so it 
 
 ### Claude Code integration
 
-Add to your Claude Code MCP settings (`.claude/settings.json` or global settings):
+The easiest way to register the server is the built-in `register` subcommand:
 
-```json
-{
-  "mcpServers": {
-    "codeindex": {
-      "command": "/path/to/codeindex-mcp",
-      "args": ["--root", "/path/to/project"]
-    }
-  }
-}
+```bash
+# Register for a specific project (writes .mcp.json in the project directory)
+./codeindex-mcp register project /path/to/project
+
+# Register globally for all projects (writes ~/.claude.json)
+./codeindex-mcp register user
+
+# Forward extra flags to the server
+./codeindex-mcp register project . -- --max-file-size 5242880 --exclude "vendor/"
 ```
 
-For project-specific configuration, create `.mcp.json` in the project root:
+Alternatively, add to your Claude Code MCP settings manually. For project-specific configuration, create `.mcp.json` in the project root:
 
 ```json
 {
@@ -66,6 +99,19 @@ For project-specific configuration, create `.mcp.json` in the project root:
     "codeindex": {
       "command": "/path/to/codeindex-mcp",
       "args": ["--root", "."]
+    }
+  }
+}
+```
+
+For global configuration, add to `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "codeindex": {
+      "command": "/path/to/codeindex-mcp",
+      "args": ["--root", "/path/to/project"]
     }
   }
 }
@@ -400,6 +446,9 @@ codeindex-mcp/
 │   ├── ignore.go            # .gitignore + .claudeignore + custom patterns
 │   ├── ignore_test.go
 │   └── defaults.go          # Built-in ignore patterns
+├── register/
+│   ├── register.go          # Auto-register subcommand for Claude Code config
+│   └── register_test.go
 ├── tools/
 │   ├── search.go            # codeindex_search handler
 │   ├── files.go             # codeindex_files handler

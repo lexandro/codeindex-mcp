@@ -16,7 +16,7 @@ func Setup(
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "codeindex-mcp",
-			Version: "0.3.0",
+			Version: "0.4.0",
 		},
 		&mcp.ServerOptions{
 			Instructions: `This server provides in-memory indexed code search. Its tools are ALWAYS faster than built-in Grep, Search, Glob, Read, and find because they use a pre-built in-memory index instead of scanning the filesystem on every call.

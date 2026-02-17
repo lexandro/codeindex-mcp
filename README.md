@@ -14,10 +14,6 @@ In-memory [MCP](https://modelcontextprotocol.io/) server for source code indexin
 ## Quick start
 
 ```bash
-git clone https://github.com/lexandro/codeindex-mcp.git
-cd codeindex-mcp
-go build -o codeindex-mcp .
-
 # Register for a project (creates .mcp.json)
 ./codeindex-mcp register project /path/to/your/project
 

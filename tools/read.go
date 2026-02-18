@@ -45,7 +45,7 @@ func (h *ReadHandler) Handle(ctx context.Context, req *mcp.CallToolRequest, args
 	elapsed := time.Since(start)
 	h.Logger.Info("codeindex_read", "filePath", args.FilePath, "elapsed", elapsed)
 
-	output := FormatFileContent(args.FilePath, content)
+	output := FormatFileContent(content)
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: output}},

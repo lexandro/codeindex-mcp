@@ -32,10 +32,8 @@ func (h *StatusHandler) Handle(ctx context.Context, req *mcp.CallToolRequest, ar
 	fileCount := h.FileIndex.FileCount()
 	totalSize := h.FileIndex.TotalSizeBytes()
 	langCounts := h.FileIndex.LanguageCounts()
-	docCount := h.ContentIndex.DocumentCount()
 	uptime := time.Since(h.StartTime)
 
-	// Memory stats
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
@@ -46,22 +44,12 @@ func (h *StatusHandler) Handle(ctx context.Context, req *mcp.CallToolRequest, ar
 		"uptime", uptime,
 	)
 
-	builder.WriteString("=== codeindex-mcp Status ===\n\n")
-	builder.WriteString(fmt.Sprintf("Root directory: %s\n", h.RootDir))
-	builder.WriteString(fmt.Sprintf("Uptime: %s\n", formatDuration(uptime)))
-	builder.WriteString(fmt.Sprintf("Indexed files: %d\n", fileCount))
-	builder.WriteString(fmt.Sprintf("Content-indexed documents: %d\n", docCount))
-	builder.WriteString(fmt.Sprintf("Total indexed size: %s\n", formatFileSize(totalSize)))
-	builder.WriteString(fmt.Sprintf("Memory usage: %s (heap: %s)\n",
-		formatFileSize(int64(memStats.Alloc)),
-		formatFileSize(int64(memStats.HeapAlloc)),
-	))
+	builder.WriteString(fmt.Sprintf("root: %s\n", h.RootDir))
+	builder.WriteString(fmt.Sprintf("uptime: %s\n", formatDuration(uptime)))
+	builder.WriteString(fmt.Sprintf("files: %d (%s)\n", fileCount, formatFileSize(totalSize)))
+	builder.WriteString(fmt.Sprintf("memory: %s\n", formatFileSize(int64(memStats.Alloc))))
 
-	// Language breakdown
 	if len(langCounts) > 0 {
-		builder.WriteString("\nLanguages:\n")
-
-		// Sort by count descending
 		type langEntry struct {
 			lang  string
 			count int
@@ -74,9 +62,11 @@ func (h *StatusHandler) Handle(ctx context.Context, req *mcp.CallToolRequest, ar
 			return entries[i].count > entries[j].count
 		})
 
+		parts := make([]string, 0, len(entries))
 		for _, entry := range entries {
-			builder.WriteString(fmt.Sprintf("  %-20s %d files\n", entry.lang, entry.count))
+			parts = append(parts, fmt.Sprintf("%s:%d", entry.lang, entry.count))
 		}
+		builder.WriteString("languages: " + strings.Join(parts, ", ") + "\n")
 	}
 
 	return &mcp.CallToolResult{

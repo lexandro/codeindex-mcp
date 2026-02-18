@@ -16,7 +16,7 @@ func Setup(
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "codeindex-mcp",
-			Version: "0.4.0",
+			Version: "0.5.0",
 		},
 		&mcp.ServerOptions{
 			Instructions: `This server provides in-memory indexed code search. Its tools are ALWAYS faster than built-in Grep, Search, Glob, Read, and find because they use a pre-built in-memory index instead of scanning the filesystem on every call.
@@ -59,9 +59,8 @@ Pattern examples:
 
 	// Register codeindex_read tool
 	mcp.AddTool(mcpServer, &mcp.Tool{
-		Name: "codeindex_read",
-		Description: `Read a file's contents from the in-memory index. Zero disk I/O — faster than the built-in Read tool.
-Returns numbered lines similar to the built-in Read tool. Use this instead of Read for any indexed file.`,
+		Name:        "codeindex_read",
+		Description: `Read a file's contents from the in-memory index. Zero disk I/O — faster than the built-in Read tool. Returns numbered lines (format: "N: content"). Use this instead of Read for any indexed file.`,
 	}, readHandler.Handle)
 
 	// Register codeindex_status tool

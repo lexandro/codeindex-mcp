@@ -29,8 +29,8 @@ func Test_ReindexHandler_Success(t *testing.T) {
 
 	text := result.Content[0].(*mcp.TextContent).Text
 
-	if !strings.Contains(text, "Reindex complete") {
-		t.Errorf("expected 'Reindex complete', got:\n%s", text)
+	if !strings.Contains(text, "reindexed:") {
+		t.Errorf("expected 'reindexed:', got:\n%s", text)
 	}
 	if !strings.Contains(text, "42") {
 		t.Errorf("expected file count '42', got:\n%s", text)

@@ -75,12 +75,7 @@ func Test_ReadHandler_Success(t *testing.T) {
 
 	text := result.Content[0].(*mcp.TextContent).Text
 
-	// Should contain the header
-	if !strings.Contains(text, "── main.go") {
-		t.Errorf("expected file path header, got:\n%s", text)
-	}
-	// Should contain line-numbered content
-	if !strings.Contains(text, "1│ package main") {
+	if !strings.Contains(text, "1: package main") {
 		t.Errorf("expected line-numbered content, got:\n%s", text)
 	}
 	if !strings.Contains(text, "hello") {

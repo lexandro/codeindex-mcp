@@ -61,7 +61,6 @@ func newTestStatusHandler(t *testing.T) *StatusHandler {
 func Test_StatusHandler_Handle(t *testing.T) {
 	h := newTestStatusHandler(t)
 
-	// Add some test data
 	h.FileIndex.AddFile(&index.IndexedFile{
 		Path:         "/test/project/main.go",
 		RelativePath: "main.go",
@@ -82,11 +81,9 @@ func Test_StatusHandler_Handle(t *testing.T) {
 	text := result.Content[0].(*mcp.TextContent).Text
 
 	checks := []string{
-		"codeindex-mcp Status",
-		"/test/project",
-		"Indexed files: 1",
-		"Content-indexed documents: 1",
-		"Go",
+		"root: /test/project",
+		"files: 1",
+		"Go:1",
 	}
 	for _, check := range checks {
 		if !strings.Contains(text, check) {

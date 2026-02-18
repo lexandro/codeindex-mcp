@@ -200,16 +200,15 @@ Full-text search across all indexed file contents.
 **Example output:**
 
 ```
-Found 3 matches in 2 files:
-
-── main.go ──
+3 matches in 2 files:
+main.go
   4: import "fmt"
   5:
   6: func main() {
   7:     fmt.Println("hello world")
   8: }
 
-── server/server.go ──
+server/server.go
   14: func main() {
   15:     startServer()
   16: }
@@ -230,12 +229,10 @@ Glob-based file search across the index.
 **Example output:**
 
 ```
-Found 4 files:
-
-  src/main.go  (Go, 2.1 KB, 85 lines)
-  src/utils/helper.go  (Go, 1.3 KB, 42 lines)
-  src/server/handler.go  (Go, 4.7 KB, 156 lines)
-  src/config/config.go  (Go, 892 B, 31 lines)
+src/main.go (Go, 2.1 KB, 85L)
+src/utils/helper.go (Go, 1.3 KB, 42L)
+src/server/handler.go (Go, 4.7 KB, 156L)
+src/config/config.go (Go, 892 B, 31L)
 ```
 
 ### 3. `codeindex_read` — Read file from index
@@ -251,14 +248,13 @@ Read a file's contents directly from the in-memory index. Zero disk I/O — fast
 **Example output:**
 
 ```
-── src/main.go (12 lines) ──
- 1│ package main
- 2│
- 3│ import "fmt"
- 4│
- 5│ func main() {
- 6│     fmt.Println("hello")
- 7│ }
+1: package main
+2:
+3: import "fmt"
+4:
+5: func main() {
+6:     fmt.Println("hello")
+7: }
 ```
 
 ### 4. `codeindex_status` — Index status
@@ -270,20 +266,11 @@ Display current index statistics.
 **Example output:**
 
 ```
-=== codeindex-mcp Status ===
-
-Root directory: /home/user/myproject
-Uptime: 45s
-Indexed files: 1234
-Content-indexed documents: 1234
-Total indexed size: 8.5 MB
-Memory usage: 95.2 MB (heap: 82.1 MB)
-
-Languages:
-  TypeScript           456 files
-  Go                   312 files
-  JavaScript           189 files
-  Python               98 files
+root: /home/user/myproject
+uptime: 45s
+files: 1234 (8.5 MB)
+memory: 95.2 MB
+languages: TypeScript:456, Go:312, JavaScript:189, Python:98
 ```
 
 ### 5. `codeindex_reindex` — Force reindex
@@ -295,10 +282,7 @@ Clear the index and rebuild from scratch. Also reloads `.gitignore` and `.claude
 **Example output:**
 
 ```
-Reindex complete.
-  Files indexed: 1234
-  Total size: 8.5 MB
-  Duration: 1.234s
+reindexed: 1234 files (8.5 MB) in 1.234s
 ```
 
 ## Ignore system

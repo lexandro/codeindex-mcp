@@ -40,7 +40,7 @@ func (h *ReindexHandler) Handle(ctx context.Context, req *mcp.CallToolRequest, a
 		"elapsed", elapsed,
 	)
 
-	output := fmt.Sprintf("Reindex complete.\n  Files indexed: %d\n  Total size: %s\n  Duration: %s",
+	output := fmt.Sprintf("reindexed: %d files (%s) in %s",
 		indexedCount, formatFileSize(totalSize), elapsed)
 
 	return &mcp.CallToolResult{

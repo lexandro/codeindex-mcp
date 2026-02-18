@@ -57,11 +57,11 @@ func Test_FormatSearchResults_WithMatches(t *testing.T) {
 
 	got := FormatSearchResults(results, 1)
 
-	if !strings.Contains(got, "Found 1 matches in 1 files") {
+	if !strings.Contains(got, "1 matches in 1 files") {
 		t.Errorf("expected header with match/file counts, got:\n%s", got)
 	}
-	if !strings.Contains(got, "── main.go ──") {
-		t.Errorf("expected file path header, got:\n%s", got)
+	if !strings.Contains(got, "main.go") {
+		t.Errorf("expected file path, got:\n%s", got)
 	}
 	if !strings.Contains(got, `5: fmt.Println("hello")`) {
 		t.Errorf("expected matching line with line number, got:\n%s", got)
@@ -98,9 +98,6 @@ func Test_FormatFileResults_WithMetadata(t *testing.T) {
 
 	got := FormatFileResults(results, false)
 
-	if !strings.Contains(got, "Found 1 files") {
-		t.Errorf("expected file count header, got:\n%s", got)
-	}
 	if !strings.Contains(got, "src/app.go") {
 		t.Errorf("expected file path, got:\n%s", got)
 	}
@@ -110,7 +107,7 @@ func Test_FormatFileResults_WithMetadata(t *testing.T) {
 	if !strings.Contains(got, "2.0 KB") {
 		t.Errorf("expected formatted size, got:\n%s", got)
 	}
-	if !strings.Contains(got, "50 lines") {
+	if !strings.Contains(got, "50L") {
 		t.Errorf("expected line count, got:\n%s", got)
 	}
 }
@@ -142,18 +139,15 @@ func Test_FormatFileResults_NameOnly(t *testing.T) {
 
 func Test_FormatFileContent_LineNumbers(t *testing.T) {
 	content := "line one\nline two\nline three"
-	got := FormatFileContent("test.txt", content)
+	got := FormatFileContent(content)
 
-	if !strings.Contains(got, "── test.txt (3 lines) ──") {
-		t.Errorf("expected header with path and line count, got:\n%s", got)
-	}
-	if !strings.Contains(got, "1│ line one") {
+	if !strings.Contains(got, "1: line one") {
 		t.Errorf("expected line 1 with number, got:\n%s", got)
 	}
-	if !strings.Contains(got, "2│ line two") {
+	if !strings.Contains(got, "2: line two") {
 		t.Errorf("expected line 2 with number, got:\n%s", got)
 	}
-	if !strings.Contains(got, "3│ line three") {
+	if !strings.Contains(got, "3: line three") {
 		t.Errorf("expected line 3 with number, got:\n%s", got)
 	}
 }

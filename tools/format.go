@@ -7,32 +7,26 @@ import (
 	"github.com/lexandro/codeindex-mcp/index"
 )
 
-// FormatSearchResults formats content search results as human-readable text.
-// Groups matches by file with line numbers and optional context.
+// FormatSearchResults formats content search results for AI consumption.
 func FormatSearchResults(results []index.ContentSearchResult, totalMatches int) string {
 	if len(results) == 0 {
 		return "No matches found."
 	}
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("Found %d matches in %d files:\n\n", totalMatches, len(results)))
+	builder.WriteString(fmt.Sprintf("%d matches in %d files:\n", totalMatches, len(results)))
 
 	for i, result := range results {
 		if i > 0 {
 			builder.WriteString("\n")
 		}
-		builder.WriteString(fmt.Sprintf("── %s ──\n", result.RelativePath))
+		builder.WriteString(fmt.Sprintf("%s\n", result.RelativePath))
 
 		for _, match := range result.Matches {
-			// Context before
 			for _, ctxLine := range match.ContextBefore {
 				builder.WriteString(fmt.Sprintf("  %s\n", ctxLine))
 			}
-
-			// The matching line with line number
 			builder.WriteString(fmt.Sprintf("  %d: %s\n", match.LineNumber, match.LineText))
-
-			// Context after
 			for _, ctxLine := range match.ContextAfter {
 				builder.WriteString(fmt.Sprintf("  %s\n", ctxLine))
 			}
@@ -42,21 +36,19 @@ func FormatSearchResults(results []index.ContentSearchResult, totalMatches int) 
 	return builder.String()
 }
 
-// FormatFileResults formats file search results as human-readable text.
+// FormatFileResults formats file search results for AI consumption.
 func FormatFileResults(results []index.FileSearchResult, nameOnly bool) string {
 	if len(results) == 0 {
 		return "No files matched."
 	}
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("Found %d files:\n\n", len(results)))
-
 	for _, result := range results {
 		if nameOnly {
 			builder.WriteString(result.File.RelativePath)
 			builder.WriteString("\n")
 		} else {
-			builder.WriteString(fmt.Sprintf("  %s  (%s, %s, %d lines)\n",
+			builder.WriteString(fmt.Sprintf("%s (%s, %s, %dL)\n",
 				result.File.RelativePath,
 				result.File.Language,
 				formatFileSize(result.File.SizeBytes),
@@ -68,20 +60,15 @@ func FormatFileResults(results []index.FileSearchResult, nameOnly bool) string {
 	return builder.String()
 }
 
-// FormatFileContent formats a file's content with line numbers, similar to the built-in Read tool.
-// Output format: header line with path and line count, followed by numbered lines.
-func FormatFileContent(filePath string, content string) string {
+// FormatFileContent formats a file's content with line numbers for AI consumption.
+func FormatFileContent(content string) string {
 	lines := strings.Split(content, "\n")
 	lineCount := len(lines)
-
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("── %s (%d lines) ──\n", filePath, lineCount))
-
-	// Calculate width needed for line numbers
 	width := len(fmt.Sprintf("%d", lineCount))
 
+	var builder strings.Builder
 	for i, line := range lines {
-		builder.WriteString(fmt.Sprintf("%*d│ %s\n", width, i+1, line))
+		builder.WriteString(fmt.Sprintf("%*d: %s\n", width, i+1, line))
 	}
 
 	return builder.String()

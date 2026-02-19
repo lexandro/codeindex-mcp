@@ -82,3 +82,54 @@ func Test_ReadHandler_Success(t *testing.T) {
 		t.Errorf("expected content with 'hello', got:\n%s", text)
 	}
 }
+
+func Test_ReadHandler_WithOffset(t *testing.T) {
+	h := newTestReadHandler(t)
+
+	fileContent := "line1\nline2\nline3\nline4\nline5"
+	h.ContentIndex.IndexFile("test.go", fileContent, "Go")
+
+	result, _, err := h.Handle(context.Background(), nil, ReadArgs{FilePath: "test.go", Offset: 3})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].(*mcp.TextContent).Text)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+
+	if strings.Contains(text, "1: line1") || strings.Contains(text, "2: line2") {
+		t.Errorf("expected offset to skip first two lines, got:\n%s", text)
+	}
+	if !strings.Contains(text, "3: line3") {
+		t.Errorf("expected line 3 with actual file number, got:\n%s", text)
+	}
+}
+
+func Test_ReadHandler_WithLimit(t *testing.T) {
+	h := newTestReadHandler(t)
+
+	fileContent := "line1\nline2\nline3\nline4\nline5"
+	h.ContentIndex.IndexFile("test.go", fileContent, "Go")
+
+	result, _, err := h.Handle(context.Background(), nil, ReadArgs{FilePath: "test.go", Limit: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].(*mcp.TextContent).Text)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+
+	if !strings.Contains(text, "1: line1") {
+		t.Errorf("expected line 1, got:\n%s", text)
+	}
+	if !strings.Contains(text, "2: line2") {
+		t.Errorf("expected line 2, got:\n%s", text)
+	}
+	if strings.Contains(text, "line3") {
+		t.Errorf("expected limit to stop after 2 lines, got:\n%s", text)
+	}
+}

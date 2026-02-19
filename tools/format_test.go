@@ -137,9 +137,9 @@ func Test_FormatFileResults_NameOnly(t *testing.T) {
 
 // --- FormatFileContent ---
 
-func Test_FormatFileContent_LineNumbers(t *testing.T) {
+func Test_FormatFileContent_NoOffsetNoLimit(t *testing.T) {
 	content := "line one\nline two\nline three"
-	got := FormatFileContent(content)
+	got := FormatFileContent(content, 0, 0)
 
 	if !strings.Contains(got, "1: line one") {
 		t.Errorf("expected line 1 with number, got:\n%s", got)
@@ -149,5 +149,65 @@ func Test_FormatFileContent_LineNumbers(t *testing.T) {
 	}
 	if !strings.Contains(got, "3: line three") {
 		t.Errorf("expected line 3 with number, got:\n%s", got)
+	}
+}
+
+func Test_FormatFileContent_WithOffset(t *testing.T) {
+	content := "line one\nline two\nline three\nline four\nline five"
+	got := FormatFileContent(content, 3, 0)
+
+	if strings.Contains(got, "1: ") || strings.Contains(got, "2: ") {
+		t.Errorf("expected offset to skip first two lines, got:\n%s", got)
+	}
+	if !strings.Contains(got, "3: line three") {
+		t.Errorf("expected line 3 with actual file line number, got:\n%s", got)
+	}
+	if !strings.Contains(got, "4: line four") {
+		t.Errorf("expected line 4, got:\n%s", got)
+	}
+	if !strings.Contains(got, "5: line five") {
+		t.Errorf("expected line 5, got:\n%s", got)
+	}
+}
+
+func Test_FormatFileContent_WithLimit(t *testing.T) {
+	content := "line one\nline two\nline three\nline four\nline five"
+	got := FormatFileContent(content, 0, 2)
+
+	if !strings.Contains(got, "1: line one") {
+		t.Errorf("expected line 1, got:\n%s", got)
+	}
+	if !strings.Contains(got, "2: line two") {
+		t.Errorf("expected line 2, got:\n%s", got)
+	}
+	if strings.Contains(got, "line three") {
+		t.Errorf("expected limit to stop after 2 lines, got:\n%s", got)
+	}
+}
+
+func Test_FormatFileContent_WithOffsetAndLimit(t *testing.T) {
+	content := "a\nb\nc\nd\ne\nf\ng"
+	got := FormatFileContent(content, 3, 2)
+
+	if strings.Contains(got, "1: ") || strings.Contains(got, "2: ") {
+		t.Errorf("expected offset to skip first two lines, got:\n%s", got)
+	}
+	if !strings.Contains(got, "3: c") {
+		t.Errorf("expected line 3: c, got:\n%s", got)
+	}
+	if !strings.Contains(got, "4: d") {
+		t.Errorf("expected line 4: d, got:\n%s", got)
+	}
+	if strings.Contains(got, "5: ") {
+		t.Errorf("expected limit to stop after 2 lines, got:\n%s", got)
+	}
+}
+
+func Test_FormatFileContent_OffsetBeyondEOF(t *testing.T) {
+	content := "line one\nline two"
+	got := FormatFileContent(content, 100, 0)
+
+	if !strings.Contains(got, "Offset exceeds file length") {
+		t.Errorf("expected error message for offset beyond EOF, got:\n%s", got)
 	}
 }

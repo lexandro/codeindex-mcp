@@ -61,16 +61,32 @@ func FormatFileResults(results []index.FileSearchResult, nameOnly bool) string {
 }
 
 // FormatFileContent formats a file's content with line numbers for AI consumption.
-func FormatFileContent(content string) string {
+// offset: 1-based starting line (0 = from beginning). limit: max lines (0 = all).
+// Line numbers in the output reflect actual file positions, not local indices.
+func FormatFileContent(content string, offset, limit int) string {
 	lines := strings.Split(content, "\n")
-	lineCount := len(lines)
-	width := len(fmt.Sprintf("%d", lineCount))
+
+	startIdx := 0
+	if offset > 1 {
+		startIdx = offset - 1
+	}
+	if startIdx >= len(lines) {
+		return "Offset exceeds file length.\n"
+	}
+	lines = lines[startIdx:]
+
+	if limit > 0 && limit < len(lines) {
+		lines = lines[:limit]
+	}
+
+	firstLineNum := startIdx + 1
+	lastLineNum := firstLineNum + len(lines) - 1
+	width := len(fmt.Sprintf("%d", lastLineNum))
 
 	var builder strings.Builder
 	for i, line := range lines {
-		builder.WriteString(fmt.Sprintf("%*d: %s\n", width, i+1, line))
+		builder.WriteString(fmt.Sprintf("%*d: %s\n", width, firstLineNum+i, line))
 	}
-
 	return builder.String()
 }
 

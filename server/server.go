@@ -60,7 +60,7 @@ Pattern examples:
 	// Register codeindex_read tool
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "codeindex_read",
-		Description: `Read a file's contents from the in-memory index. Zero disk I/O — faster than the built-in Read tool. Returns numbered lines (format: "N: content"). Use this instead of Read for any indexed file.`,
+		Description: `Read a file's contents from the in-memory index. Zero disk I/O — faster than the built-in Read tool. Returns numbered lines (format: "N: content"). Use this instead of Read for any indexed file. By default reads up to 2000 lines. Optionally specify a line offset and limit (especially handy for long files).`,
 	}, readHandler.Handle)
 
 	// Register codeindex_status tool

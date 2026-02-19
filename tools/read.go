@@ -13,6 +13,8 @@ import (
 // ReadArgs defines the input parameters for the codeindex_read tool.
 type ReadArgs struct {
 	FilePath string `json:"filePath" jsonschema:"Relative file path to read from the index (e.g. src/main.go)"`
+	Offset   int    `json:"offset,omitempty" jsonschema:"Line number to start reading from (1-based). Only provide if the file is too large to read at once"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"Number of lines to read. Only provide if the file is too large to read at once"`
 }
 
 // ReadHandler holds the dependencies for the read tool.
@@ -45,7 +47,7 @@ func (h *ReadHandler) Handle(ctx context.Context, req *mcp.CallToolRequest, args
 	elapsed := time.Since(start)
 	h.Logger.Info("codeindex_read", "filePath", args.FilePath, "elapsed", elapsed)
 
-	output := FormatFileContent(content)
+	output := FormatFileContent(content, args.Offset, args.Limit)
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: output}},

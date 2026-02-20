@@ -10,6 +10,7 @@ import (
 
 	"log/slog"
 
+	"github.com/lexandro/codeindex-mcp/ast"
 	"github.com/lexandro/codeindex-mcp/ignore"
 	"github.com/lexandro/codeindex-mcp/index"
 	"github.com/lexandro/codeindex-mcp/language"
@@ -23,6 +24,7 @@ func performIndexing(
 	fileIndex *index.FileIndex,
 	contentIndex *index.ContentIndex,
 	ignoreMatcher *ignore.Matcher,
+	astModule *ast.Module,
 	logger *slog.Logger,
 ) (int, int64) {
 	var indexedCount int
@@ -44,7 +46,7 @@ func performIndexing(
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				if err := indexSingleFile(job.path, job.relPath, job.info, rootDir, fileIndex, contentIndex, ignoreMatcher); err != nil {
+				if err := indexSingleFile(job.path, job.relPath, job.info, rootDir, fileIndex, contentIndex, ignoreMatcher, astModule); err != nil {
 					logger.Debug("skipped file", "path", job.relPath, "error", err)
 					continue
 				}
@@ -97,6 +99,7 @@ func indexSingleFile(
 	fileIndex *index.FileIndex,
 	contentIndex *index.ContentIndex,
 	ignoreMatcher *ignore.Matcher,
+	astModule *ast.Module,
 ) error {
 	// Read file content with retry for Windows file locking
 	content, err := readFileWithRetry(absolutePath)
@@ -129,6 +132,9 @@ func indexSingleFile(
 		return fmt.Errorf("indexing content: %w", err)
 	}
 
+	// Add to AST index (no-op if astModule is nil)
+	astModule.OnFileChanged(relativePath, content)
+
 	return nil
 }
 
@@ -154,6 +160,7 @@ func handleWatcherEvents(
 	fileIndex *index.FileIndex,
 	contentIndex *index.ContentIndex,
 	ignoreMatcher *ignore.Matcher,
+	astModule *ast.Module,
 	logger *slog.Logger,
 ) {
 	for events := range fileWatcher.Events() {
@@ -165,6 +172,7 @@ func handleWatcherEvents(
 			case watcher.OpRemove, watcher.OpRename:
 				fileIndex.RemoveFile(relPath)
 				contentIndex.RemoveFile(relPath)
+				astModule.OnFileRemoved(relPath)
 				logger.Debug("removed from index", "path", relPath)
 
 			case watcher.OpCreate, watcher.OpWrite:
@@ -191,7 +199,7 @@ func handleWatcherEvents(
 					continue
 				}
 
-				err = indexSingleFile(event.Path, relPath, info, rootDir, fileIndex, contentIndex, ignoreMatcher)
+				err = indexSingleFile(event.Path, relPath, info, rootDir, fileIndex, contentIndex, ignoreMatcher, astModule)
 				if err != nil {
 					logger.Debug("skipped file update", "path", relPath, "error", err)
 					continue

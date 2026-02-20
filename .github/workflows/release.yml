@@ -20,6 +20,10 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.13.0"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"

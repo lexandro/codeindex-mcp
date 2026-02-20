@@ -16,7 +16,7 @@ In-memory [MCP](https://modelcontextprotocol.io/) server for source code indexin
 - **Glob-based file search** with `**` doublestar support
 - **Auto-updating** — a background file watcher keeps the index in sync with disk
 - **Configurable filtering** — respects `.gitignore`, `.claudeignore`, and custom exclude patterns
-- **Zero runtime dependencies** — single static Go binary (~17 MB)
+- **Single binary** — no runtime dependencies; ~18 MB lightweight build, ~31 MB full AST build (includes tree-sitter grammars)
 
 ## Quick start
 
@@ -34,17 +34,55 @@ That's it — Claude Code will automatically discover and use the indexed search
 
 ### Prerequisites
 
-- [Go 1.22+](https://go.dev/dl/)
+- [Go 1.25+](https://go.dev/dl/)
+- **GCC C compiler** — only required for the full AST build (`make build-ast`); the lightweight build has no CGo dependency
+
+The setup scripts handle everything automatically.
 
 ### Build from source
 
 ```bash
 git clone https://github.com/lexandro/codeindex-mcp.git
 cd codeindex-mcp
-go build -o codeindex-mcp .
 ```
 
-On Windows this produces `codeindex-mcp.exe`.
+**First-time setup** (installs Go, GCC, make if missing):
+
+```bash
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts/setup_build.ps1
+
+# Linux / macOS
+bash scripts/setup_build.sh
+```
+
+The script detects your package manager (apt, dnf, pacman, brew, winget), installs any missing dependencies, and prints the exact build command at the end.
+
+**Two build variants:**
+
+| | Lightweight | Full AST |
+|---|---|---|
+| Binary size | ~18 MB | ~31 MB |
+| CGo / GCC | not required | required |
+| Go AST indexing | yes | yes |
+| TypeScript / Python / JS AST | no | yes |
+| Build command | `make build` | `make build-ast` |
+
+```bash
+# Lightweight — no GCC needed, works everywhere
+make build
+make test
+
+# Full AST — requires GCC (run setup_build first)
+make build-ast
+make test-ast
+```
+
+Without `make`:
+```bash
+go build -o codeindex-mcp .                               # lightweight
+CGO_ENABLED=1 go build -tags ast -o codeindex-mcp .      # full AST
+```
 
 ### Register in Claude Code
 
@@ -66,7 +104,12 @@ The `register` command auto-detects the binary path and creates the correct conf
 ### Run tests
 
 ```bash
-go test ./...
+make test        # lightweight (no CGo)
+make test-ast    # full AST build (requires GCC)
+
+# manually:
+go test ./...                              # lightweight
+CGO_ENABLED=1 go test -tags ast ./...     # full AST
 ```
 
 ## Usage
@@ -135,6 +178,9 @@ Claude Code will then automatically use `codeindex_search`, `codeindex_files`, `
 | `--log-level LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `--log-file PATH` | `<root>/codeindex-mcp.log` | Log file path |
 | `--sync-interval N` | `0` (disabled) | Periodic index sync verification interval in seconds (0 = disabled) |
+| `--ast` | `false` | Enable AST symbol indexing (adds 5 `codeindex_ast_*` tools) |
+| `--ast-languages LIST` | `go,typescript,python,javascript` | Languages to AST-index. In the lightweight build only `go` is available; `typescript`, `python`, `javascript` require `-tags ast` |
+| `--ast-max-file-size-kb N` | `500` | Maximum file size in KB to AST-index |
 
 ### Examples
 
@@ -169,6 +215,12 @@ Claude Code will then automatically use `codeindex_search`, `codeindex_files`, `
 
 # Allow larger files (5 MB)
 ./codeindex-mcp --root . --max-file-size 5242880
+
+# Enable AST symbol indexing
+./codeindex-mcp --root . --ast
+
+# AST indexing for Go only (faster, smaller memory footprint)
+./codeindex-mcp --root . --ast --ast-languages go
 ```
 
 ## MCP Tools
@@ -283,6 +335,106 @@ Clear the index and rebuild from scratch. Also reloads `.gitignore` and `.claude
 
 ```
 reindexed: 1234 files (8.5 MB) in 1.234s
+```
+
+## AST Tools (optional, `--ast` flag)
+
+When started with `--ast`, the server registers 5 additional tools for structural code navigation.
+
+| Build | Languages | How to build |
+|-------|-----------|-------------|
+| Lightweight (`make build`) | Go only — via `go/parser`, no CGo | `go build .` |
+| Full AST (`make build-ast`) | Go + TypeScript + Python + JavaScript | `go build -tags ast .` |
+
+Both builds expose the same 5 tools — the difference is which languages get indexed.
+
+### 1. `codeindex_ast_search_symbols` — Search symbols by name
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `query` | string | yes | Symbol name (case-insensitive substring match) |
+| `kind` | string | no | Filter by kind: `class`, `interface`, `enum`, `function`, `method`, `field`, `variable`, `constant`, `type_alias` |
+| `language` | string | no | Filter by language: `go`, `typescript`, `python`, `javascript` |
+| `limit` | int | no | Max results (default: 20) |
+
+**Example output:**
+```
+3 symbols matching "handler":
+function  HandleRequest        server/handler.go:12  go
+method    HandleError          server/handler.go:45  go
+function  handleWatcherEvents  indexing.go:98        go
+```
+
+### 2. `codeindex_ast_file_symbols` — List symbols in a file
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `file` | string | yes | Relative file path |
+
+**Example output:**
+```
+6 symbols in server/handler.go:
+class     Server          line 8
+method    Start           line 15   parent: Server
+method    Stop            line 28   parent: Server
+function  HandleRequest   line 45
+function  handleError     line 67
+variable  defaultTimeout  line 5
+```
+
+### 3. `codeindex_ast_find_usages` — Find files referencing a symbol
+
+Searches for the symbol name as a text pattern across all indexed files. Returns files that likely reference it (not a full type-aware analysis).
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `symbol` | string | yes | Symbol name to search for |
+| `kind` | string | no | Optional kind hint (informational only) |
+
+**Example output:**
+```
+5 files reference "HandleRequest":
+server/handler.go
+server/handler_test.go
+main.go
+tools/proxy.go
+docs/api.md
+```
+
+### 4. `codeindex_ast_get_imports` — List imports for a file
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `file` | string | yes | Relative file path |
+
+**Example output:**
+```
+4 imports in server/handler.go:
+fmt
+net/http
+github.com/lexandro/codeindex-mcp/index
+log/slog
+```
+
+### 5. `codeindex_ast_stats` — AST index statistics
+
+**Parameters:** none
+
+**Example output:**
+```
+AST index stats:
+files:    142
+symbols:  1847
+by kind:  function:623 method:441 class:187 variable:312 constant:98 ...
+by lang:  go:1203 typescript:489 python:155
 ```
 
 ## Ignore system
@@ -443,6 +595,23 @@ codeindex-mcp/
 │   ├── status.go            # codeindex_status handler
 │   ├── reindex.go           # codeindex_reindex handler
 │   └── format.go            # Output formatting
+├── ast/                     # AST symbol indexing (--ast flag)
+│   ├── symbols.go           # Symbol, SymbolKind, SymbolTable
+│   ├── extractor.go         # LanguageExtractor interface
+│   ├── extractor_go.go      # Go extractor — go/parser, always compiled
+│   ├── extractor_typescript.go  # TypeScript extractor — tree-sitter, build tag: ast
+│   ├── extractor_python.go  # Python extractor — tree-sitter, build tag: ast
+│   ├── extractor_javascript.go  # JavaScript extractor — tree-sitter, build tag: ast
+│   ├── languages_noast.go   # Extractor registry, Go only (build tag: !ast)
+│   ├── languages_ast.go     # Extractor registry, all 4 languages (build tag: ast)
+│   ├── module.go            # Module wiring: OnFileChanged/Removed, RegisterTools
+│   ├── tools.go             # 5 codeindex_ast_* MCP tool handlers
+│   └── symbols_test.go
+├── scripts/
+│   ├── setup_build.sh       # Linux/macOS: full build environment setup
+│   ├── setup_build.ps1      # Windows: full build environment setup
+│   └── setup-gcc.ps1        # Windows: GCC-only install helper
+├── Makefile                 # build / build-ast / test / test-ast / run / run-ast
 └── language/
     ├── detect.go            # Extension → language mapping (70+)
     ├── detect_test.go
@@ -459,6 +628,10 @@ codeindex-mcp/
 | [fsnotify/fsnotify](https://github.com/fsnotify/fsnotify) | v1.9.0 | File system watching |
 | [bmatcuk/doublestar/v4](https://github.com/bmatcuk/doublestar) | v4.10.0 | `**` glob support |
 | [denormal/go-gitignore](https://github.com/denormal/go-gitignore) | latest | .gitignore / .claudeignore parsing |
+| [tree-sitter/go-tree-sitter](https://github.com/tree-sitter/go-tree-sitter) | v0.25.0 | CGo tree-sitter bindings (`-tags ast` only) |
+| [tree-sitter/tree-sitter-typescript](https://github.com/tree-sitter/tree-sitter-typescript) | v0.23.2 | TypeScript grammar (`-tags ast` only) |
+| [tree-sitter/tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python) | v0.25.0 | Python grammar (`-tags ast` only) |
+| [tree-sitter/tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript) | v0.25.0 | JavaScript grammar (`-tags ast` only) |
 
 ## Performance
 

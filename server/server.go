@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/lexandro/codeindex-mcp/ast"
 	"github.com/lexandro/codeindex-mcp/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -12,6 +13,7 @@ func Setup(
 	statusHandler *tools.StatusHandler,
 	reindexHandler *tools.ReindexHandler,
 	readHandler *tools.ReadHandler,
+	astModule *ast.Module,
 ) *mcp.Server {
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{
@@ -74,6 +76,11 @@ Pattern examples:
 		Name:        "codeindex_reindex",
 		Description: "Force a full re-index of the project. Clears existing index and rebuilds from scratch.",
 	}, reindexHandler.Handle)
+
+	// Register AST tools if module is enabled
+	if astModule != nil {
+		astModule.RegisterTools(mcpServer)
+	}
 
 	return mcpServer
 }

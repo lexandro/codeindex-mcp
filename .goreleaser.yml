@@ -1,7 +1,10 @@
 version: 2
 
 builds:
-  - env:
+  # Lightweight build — no CGo, Go AST only
+  - id: light
+    binary: codeindex-mcp
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
@@ -18,8 +21,59 @@ builds:
     ldflags:
       - -s -w
 
+  # Full build — CGo + tree-sitter, all 4 languages
+  - id: full
+    binary: codeindex-mcp-ast
+    tags:
+      - ast
+    env:
+      - CGO_ENABLED=1
+      - >-
+        {{- if eq .Os "linux" -}}
+        {{- if eq .Arch "amd64" -}}CC=zig cc -target x86_64-linux-musl
+        {{- else -}}CC=zig cc -target aarch64-linux-musl
+        {{- end -}}
+        {{- else if eq .Os "darwin" -}}
+        {{- if eq .Arch "amd64" -}}CC=zig cc -target x86_64-macos
+        {{- else -}}CC=zig cc -target aarch64-macos
+        {{- end -}}
+        {{- else if eq .Os "windows" -}}CC=zig cc -target x86_64-windows-gnu
+        {{- end -}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
 archives:
-  - formats:
+  - id: light-archive
+    builds:
+      - light
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+
+  - id: full-archive
+    builds:
+      - full
+    name_template: "{{ .ProjectName }}-ast_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
       - tar.gz
     format_overrides:
       - goos: windows

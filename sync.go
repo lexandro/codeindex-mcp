@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/lexandro/codeindex-mcp/ast"
 	"github.com/lexandro/codeindex-mcp/ignore"
 	"github.com/lexandro/codeindex-mcp/index"
 )
@@ -26,6 +27,7 @@ func runPeriodicSync(
 	fileIndex *index.FileIndex,
 	contentIndex *index.ContentIndex,
 	ignoreMatcher *ignore.Matcher,
+	astModule *ast.Module,
 	logger *slog.Logger,
 	stop <-chan struct{},
 ) {
@@ -41,7 +43,7 @@ func runPeriodicSync(
 			logger.Info("periodic sync stopped")
 			return
 		case <-ticker.C:
-			result := performSyncVerification(rootDir, fileIndex, contentIndex, ignoreMatcher, logger)
+			result := performSyncVerification(rootDir, fileIndex, contentIndex, ignoreMatcher, astModule, logger)
 			totalDiscrepancies := result.MissingFiles + result.StaleFiles + result.ModifiedFiles
 			if totalDiscrepancies > 0 {
 				logger.Info("sync verification complete",
@@ -64,6 +66,7 @@ func performSyncVerification(
 	fileIndex *index.FileIndex,
 	contentIndex *index.ContentIndex,
 	ignoreMatcher *ignore.Matcher,
+	astModule *ast.Module,
 	logger *slog.Logger,
 ) SyncResult {
 	start := time.Now()
@@ -108,7 +111,7 @@ func performSyncVerification(
 	for relPath, info := range diskFiles {
 		if _, exists := indexedSet[relPath]; !exists {
 			absPath := filepath.Join(rootDir, filepath.FromSlash(relPath))
-			err := indexSingleFile(absPath, relPath, info, rootDir, fileIndex, contentIndex, ignoreMatcher)
+			err := indexSingleFile(absPath, relPath, info, rootDir, fileIndex, contentIndex, ignoreMatcher, astModule)
 			if err != nil {
 				logger.Debug("sync: skipped missing file", "path", relPath, "error", err)
 				continue
@@ -123,6 +126,7 @@ func performSyncVerification(
 		if _, exists := diskFiles[relPath]; !exists {
 			fileIndex.RemoveFile(relPath)
 			contentIndex.RemoveFile(relPath)
+			astModule.OnFileRemoved(relPath)
 			logger.Info("sync: removed stale file", "path", relPath)
 			result.StaleFiles++
 		}
@@ -136,7 +140,7 @@ func performSyncVerification(
 		}
 		if !info.ModTime().Equal(indexed.ModTime) {
 			absPath := filepath.Join(rootDir, filepath.FromSlash(relPath))
-			err := indexSingleFile(absPath, relPath, info, rootDir, fileIndex, contentIndex, ignoreMatcher)
+			err := indexSingleFile(absPath, relPath, info, rootDir, fileIndex, contentIndex, ignoreMatcher, astModule)
 			if err != nil {
 				logger.Debug("sync: skipped modified file", "path", relPath, "error", err)
 				continue

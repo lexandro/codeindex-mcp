@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lexandro/codeindex-mcp/ast"
 	"github.com/lexandro/codeindex-mcp/ignore"
 	"github.com/lexandro/codeindex-mcp/index"
 	"github.com/lexandro/codeindex-mcp/register"
@@ -55,6 +56,9 @@ func main() {
 	var syncInterval int
 	var excludes excludePatterns
 	var forceIncludes forceIncludePatterns
+	var astEnabled bool
+	var astLanguages string
+	var astMaxFileSizeKB int
 
 	flag.StringVar(&rootDir, "root", "", "Project root directory (default: current working directory)")
 	flag.Var(&excludes, "exclude", "Extra ignore pattern (repeatable)")
@@ -65,6 +69,9 @@ func main() {
 	flag.StringVar(&logFile, "log-file", "", "Log file path (default: codeindex-mcp.log in root dir)")
 	flag.BoolVar(&logEnabled, "log-enabled", true, "Enable logging (default: true, set to false to disable all logging)")
 	flag.IntVar(&syncInterval, "sync-interval", 0, "Periodic sync interval in seconds (0 = disabled)")
+	flag.BoolVar(&astEnabled, "ast", false, "Enable AST symbol indexing (requires CGo-built binary)")
+	flag.StringVar(&astLanguages, "ast-languages", "go,typescript,python,javascript", "Comma-separated languages for AST indexing")
+	flag.IntVar(&astMaxFileSizeKB, "ast-max-file-size-kb", 500, "Max file size in KB for AST parsing (default: 500)")
 	flag.Parse()
 
 	if syncInterval < 0 {
@@ -126,8 +133,22 @@ func main() {
 	}
 	defer contentIndex.Close()
 
+	// Create AST module (nil when --ast flag is not set; no overhead when disabled)
+	var astModule *ast.Module
+	if astEnabled {
+		langs := strings.Split(astLanguages, ",")
+		for i, lang := range langs {
+			langs[i] = strings.TrimSpace(strings.ToLower(lang))
+		}
+		astModule = ast.NewModule(ast.ModuleConfig{
+			Languages:        langs,
+			MaxFileSizeBytes: int64(astMaxFileSizeKB) * 1024,
+		}, logger)
+		logger.Info("AST module enabled", "languages", langs, "maxFileSizeKB", astMaxFileSizeKB)
+	}
+
 	// Perform initial indexing
-	indexedCount, totalSize := performIndexing(rootDir, fileIndex, contentIndex, ignoreMatcher, logger)
+	indexedCount, totalSize := performIndexing(rootDir, fileIndex, contentIndex, ignoreMatcher, astModule, logger)
 	indexDuration := time.Since(startTime)
 	logger.Info("initial indexing complete",
 		"files", indexedCount,
@@ -141,7 +162,7 @@ func main() {
 		logger.Warn("failed to start file watcher, continuing without live updates", "error", err)
 	} else {
 		go fileWatcher.Start()
-		go handleWatcherEvents(fileWatcher, rootDir, fileIndex, contentIndex, ignoreMatcher, logger)
+		go handleWatcherEvents(fileWatcher, rootDir, fileIndex, contentIndex, ignoreMatcher, astModule, logger)
 		defer fileWatcher.Close()
 	}
 
@@ -149,7 +170,7 @@ func main() {
 	var syncStop chan struct{}
 	if syncInterval > 0 {
 		syncStop = make(chan struct{})
-		go runPeriodicSync(syncInterval, rootDir, fileIndex, contentIndex, ignoreMatcher, logger, syncStop)
+		go runPeriodicSync(syncInterval, rootDir, fileIndex, contentIndex, ignoreMatcher, astModule, logger, syncStop)
 		defer close(syncStop)
 	}
 
@@ -174,14 +195,14 @@ func main() {
 			}
 			// Reload ignore rules in case .gitignore or .claudeignore changed
 			ignoreMatcher.Reload()
-			count, size := performIndexing(rootDir, fileIndex, contentIndex, ignoreMatcher, logger)
+			count, size := performIndexing(rootDir, fileIndex, contentIndex, ignoreMatcher, astModule, logger)
 			elapsed := time.Since(start).Round(time.Millisecond).String()
 			return count, size, elapsed, nil
 		},
 	}
 
 	// Setup and run MCP server on stdio
-	mcpServer := server.Setup(searchHandler, filesHandler, statusHandler, reindexHandler, readHandler)
+	mcpServer := server.Setup(searchHandler, filesHandler, statusHandler, reindexHandler, readHandler, astModule)
 
 	logger.Info("MCP server starting on stdio")
 	if err := mcpServer.Run(context.Background(), &mcp.StdioTransport{}); err != nil {

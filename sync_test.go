@@ -39,7 +39,7 @@ func Test_performSyncVerification_DetectsMissingFiles(t *testing.T) {
 	filePath := filepath.Join(tmpDir, "missing.go")
 	os.WriteFile(filePath, []byte("package main\n"), 0644)
 
-	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, logger)
+	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, nil, logger)
 
 	if result.MissingFiles != 1 {
 		t.Errorf("expected 1 missing file, got %d", result.MissingFiles)
@@ -80,7 +80,7 @@ func Test_performSyncVerification_DetectsStaleFiles(t *testing.T) {
 	})
 	contentIndex.IndexFile("deleted.go", "package main\n", "Go")
 
-	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, logger)
+	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, nil, logger)
 
 	if result.StaleFiles != 1 {
 		t.Errorf("expected 1 stale file, got %d", result.StaleFiles)
@@ -122,7 +122,7 @@ func Test_performSyncVerification_DetectsModifiedFiles(t *testing.T) {
 	})
 	contentIndex.IndexFile("modified.go", "package main\n", "Go")
 
-	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, logger)
+	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, nil, logger)
 
 	if result.ModifiedFiles != 1 {
 		t.Errorf("expected 1 modified file, got %d", result.ModifiedFiles)
@@ -162,7 +162,7 @@ func Test_performSyncVerification_InSyncReturnsZeros(t *testing.T) {
 	})
 	contentIndex.IndexFile("synced.go", "package main\n", "Go")
 
-	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, logger)
+	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, nil, logger)
 
 	if result.MissingFiles != 0 {
 		t.Errorf("expected 0 missing files, got %d", result.MissingFiles)
@@ -192,7 +192,7 @@ func Test_performSyncVerification_SkipsBinaryFiles(t *testing.T) {
 	binaryData := []byte{0x89, 0x50, 0x4E, 0x47, 0x00, 0x0A, 0x1A, 0x0A}
 	os.WriteFile(binaryPath, binaryData, 0644)
 
-	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, logger)
+	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, nil, logger)
 
 	// Binary file should not count as missing (it's skipped by indexSingleFile)
 	if result.MissingFiles != 0 {
@@ -223,7 +223,7 @@ func Test_performSyncVerification_SkipsIgnoredDirectories(t *testing.T) {
 	// Create a normal file
 	os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n"), 0644)
 
-	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, logger)
+	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, nil, logger)
 
 	if result.MissingFiles != 1 {
 		t.Errorf("expected 1 missing file (main.go only), got %d", result.MissingFiles)
@@ -263,7 +263,7 @@ func Test_performSyncVerification_SkipsTooLargeFiles(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(tmpDir, "large.go"), largeContent, 0644)
 
-	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, logger)
+	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, nil, logger)
 
 	if result.MissingFiles != 1 {
 		t.Errorf("expected 1 missing file (small.go only), got %d", result.MissingFiles)
@@ -285,7 +285,7 @@ func Test_performSyncVerification_EmptyDirectory(t *testing.T) {
 	}
 	defer contentIndex.Close()
 
-	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, logger)
+	result := performSyncVerification(tmpDir, fileIndex, contentIndex, matcher, nil, logger)
 
 	if result.MissingFiles != 0 {
 		t.Errorf("expected 0 missing files, got %d", result.MissingFiles)
@@ -315,7 +315,7 @@ func Test_runPeriodicSync_StopsOnChannelClose(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		runPeriodicSync(1, tmpDir, fileIndex, contentIndex, matcher, logger, stop)
+		runPeriodicSync(1, tmpDir, fileIndex, contentIndex, matcher, nil, logger, stop)
 		close(done)
 	}()
 

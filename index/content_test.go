@@ -528,3 +528,28 @@ func Test_ContentIndex_DocumentCount(t *testing.T) {
 		t.Errorf("expected 2 documents, got %d", ci.DocumentCount())
 	}
 }
+
+func Test_ContentIndex_SlashOnlyQueries_AreLiteral(t *testing.T) {
+	ci := newTestContentIndex(t)
+	defer ci.Close()
+
+	ci.IndexFile("a.go", "// a comment line\nplain line\npath/to/file\n", "Go")
+
+	// "//" is too short to be regex syntax (needs /x/) - treated as literal
+	_, totalMatches, _, err := ci.Search(SearchOptions{Query: "//"})
+	if err != nil {
+		t.Fatalf("search error: %v", err)
+	}
+	if totalMatches != 1 {
+		t.Errorf("expected literal '//' to match the comment line once, got %d", totalMatches)
+	}
+
+	// A single "/" is a plain literal too
+	_, totalMatches, _, err = ci.Search(SearchOptions{Query: "/"})
+	if err != nil {
+		t.Fatalf("search error: %v", err)
+	}
+	if totalMatches != 2 {
+		t.Errorf("expected literal '/' to match 2 lines, got %d", totalMatches)
+	}
+}

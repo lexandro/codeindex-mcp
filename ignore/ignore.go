@@ -119,22 +119,17 @@ func (m *Matcher) ShouldIgnoreDir(absolutePath string) bool {
 		return true
 	}
 
-	// If force-include patterns exist, check if this directory could contain force-included files.
-	// If it could, don't prune it even if it would normally be ignored.
-	m.mu.RLock()
-	hasForceIncludes := len(m.forceIncludePatterns) > 0
-	m.mu.RUnlock()
+	// If this directory could contain force-included files, don't prune it
+	// even if it would normally be ignored. (Returns false when no
+	// force-include patterns are configured.)
+	relativePath, err := filepath.Rel(m.rootDir, absolutePath)
+	if err != nil {
+		relativePath = absolutePath
+	}
+	relativePath = filepath.ToSlash(relativePath)
 
-	if hasForceIncludes {
-		relativePath, err := filepath.Rel(m.rootDir, absolutePath)
-		if err != nil {
-			relativePath = absolutePath
-		}
-		relativePath = filepath.ToSlash(relativePath)
-
-		if m.couldContainForceIncluded(relativePath) {
-			return false
-		}
+	if m.couldContainForceIncluded(relativePath) {
+		return false
 	}
 
 	// Fast check: common directories that should always be skipped

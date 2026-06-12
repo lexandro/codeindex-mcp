@@ -22,10 +22,14 @@ builds:
       - -s -w
 
   # Full build — CGo + tree-sitter, all 4 languages
+  # netgo: Go 1.21+ links libresolv on darwin via the cgo DNS resolver;
+  # zig has no macOS resolv stub and this stdio server never does DNS,
+  # so force the pure-Go resolver on all platforms
   - id: full
     binary: codeindex-mcp-ast
     tags:
       - ast
+      - netgo
     env:
       - CGO_ENABLED=1
       - >-

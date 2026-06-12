@@ -8,29 +8,55 @@ import (
 )
 
 // FormatSearchResults formats content search results for AI consumption.
-func FormatSearchResults(results []index.ContentSearchResult, totalMatches int) string {
+// outputMode: "content" renders hunks with line numbers ("N:" = match, "N-" = context),
+// "files" renders file paths only, "count" renders "path: matchCount" lines.
+func FormatSearchResults(results []index.ContentSearchResult, totalMatches int, truncated bool, outputMode string) string {
 	if len(results) == 0 {
 		return "No matches found."
 	}
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("%d matches in %d files:\n", totalMatches, len(results)))
 
-	for i, result := range results {
-		if i > 0 {
+	switch outputMode {
+	case "files":
+		for _, result := range results {
+			builder.WriteString(result.RelativePath)
 			builder.WriteString("\n")
 		}
-		builder.WriteString(fmt.Sprintf("%s\n", result.RelativePath))
-
-		for _, match := range result.Matches {
-			for _, ctxLine := range match.ContextBefore {
-				builder.WriteString(fmt.Sprintf("  %s\n", ctxLine))
+	case "count":
+		for _, result := range results {
+			builder.WriteString(fmt.Sprintf("%s: %d\n", result.RelativePath, result.MatchCount))
+		}
+	default:
+		builder.WriteString(fmt.Sprintf("%d matches in %d files:\n", totalMatches, len(results)))
+		for i, result := range results {
+			if i > 0 {
+				builder.WriteString("\n")
 			}
-			builder.WriteString(fmt.Sprintf("  %d: %s\n", match.LineNumber, match.LineText))
-			for _, ctxLine := range match.ContextAfter {
-				builder.WriteString(fmt.Sprintf("  %s\n", ctxLine))
+			builder.WriteString(fmt.Sprintf("%s\n", result.RelativePath))
+
+			displayedMatches := 0
+			for hunkIdx, hunk := range result.Hunks {
+				if hunkIdx > 0 {
+					builder.WriteString("  --\n")
+				}
+				for lineIdx, line := range hunk.Lines {
+					separator := "-"
+					if hunk.IsMatch[lineIdx] {
+						separator = ":"
+						displayedMatches++
+					}
+					builder.WriteString(fmt.Sprintf("  %d%s %s\n", hunk.StartLine+lineIdx, separator, line))
+				}
+			}
+			if result.MatchCount > displayedMatches {
+				builder.WriteString(fmt.Sprintf("  ... +%d more matches\n", result.MatchCount-displayedMatches))
 			}
 		}
+	}
+
+	if truncated {
+		builder.WriteString("\n(file limit reached - more files match; refine the query or raise maxResults)\n")
 	}
 
 	return builder.String()

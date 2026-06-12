@@ -34,7 +34,7 @@ func Test_FormatFileSize_Megabytes(t *testing.T) {
 // --- FormatSearchResults ---
 
 func Test_FormatSearchResults_NoMatches(t *testing.T) {
-	got := FormatSearchResults(nil, 0)
+	got := FormatSearchResults(nil, 0, false, "content")
 	if got != "No matches found." {
 		t.Errorf("expected 'No matches found.', got '%s'", got)
 	}
@@ -44,18 +44,18 @@ func Test_FormatSearchResults_WithMatches(t *testing.T) {
 	results := []index.ContentSearchResult{
 		{
 			RelativePath: "main.go",
-			Matches: []index.LineMatch{
+			MatchCount:   1,
+			Hunks: []index.Hunk{
 				{
-					LineNumber:    5,
-					LineText:      `fmt.Println("hello")`,
-					ContextBefore: []string{"func main() {"},
-					ContextAfter:  []string{"}"},
+					StartLine: 4,
+					Lines:     []string{"func main() {", `fmt.Println("hello")`, "}"},
+					IsMatch:   []bool{false, true, false},
 				},
 			},
 		},
 	}
 
-	got := FormatSearchResults(results, 1)
+	got := FormatSearchResults(results, 1, false, "content")
 
 	if !strings.Contains(got, "1 matches in 1 files") {
 		t.Errorf("expected header with match/file counts, got:\n%s", got)
@@ -66,11 +66,77 @@ func Test_FormatSearchResults_WithMatches(t *testing.T) {
 	if !strings.Contains(got, `5: fmt.Println("hello")`) {
 		t.Errorf("expected matching line with line number, got:\n%s", got)
 	}
-	if !strings.Contains(got, "func main() {") {
-		t.Errorf("expected context before, got:\n%s", got)
+	if !strings.Contains(got, "4- func main() {") {
+		t.Errorf("expected numbered context line before, got:\n%s", got)
 	}
-	if !strings.Contains(got, "}") {
-		t.Errorf("expected context after, got:\n%s", got)
+	if !strings.Contains(got, "6- }") {
+		t.Errorf("expected numbered context line after, got:\n%s", got)
+	}
+}
+
+func Test_FormatSearchResults_FilesMode(t *testing.T) {
+	results := []index.ContentSearchResult{
+		{RelativePath: "a.go", MatchCount: 3},
+		{RelativePath: "b.go", MatchCount: 1},
+	}
+
+	got := FormatSearchResults(results, 4, false, "files")
+
+	if got != "a.go\nb.go\n" {
+		t.Errorf("files mode should list paths only, got:\n%s", got)
+	}
+}
+
+func Test_FormatSearchResults_CountMode(t *testing.T) {
+	results := []index.ContentSearchResult{
+		{RelativePath: "a.go", MatchCount: 3},
+		{RelativePath: "b.go", MatchCount: 1},
+	}
+
+	got := FormatSearchResults(results, 4, false, "count")
+
+	if got != "a.go: 3\nb.go: 1\n" {
+		t.Errorf("count mode should list paths with counts, got:\n%s", got)
+	}
+}
+
+func Test_FormatSearchResults_TruncationNotices(t *testing.T) {
+	results := []index.ContentSearchResult{
+		{
+			RelativePath: "a.go",
+			MatchCount:   25,
+			Hunks: []index.Hunk{
+				{StartLine: 1, Lines: []string{"target"}, IsMatch: []bool{true}},
+			},
+		},
+	}
+
+	got := FormatSearchResults(results, 25, true, "content")
+
+	if !strings.Contains(got, "+24 more matches") {
+		t.Errorf("expected per-file truncation notice, got:\n%s", got)
+	}
+	if !strings.Contains(got, "file limit reached") {
+		t.Errorf("expected file limit notice, got:\n%s", got)
+	}
+}
+
+func Test_FormatSearchResults_HunkSeparator(t *testing.T) {
+	results := []index.ContentSearchResult{
+		{
+			RelativePath: "a.go",
+			MatchCount:   2,
+			Hunks: []index.Hunk{
+				{StartLine: 1, Lines: []string{"first"}, IsMatch: []bool{true}},
+				{StartLine: 50, Lines: []string{"second"}, IsMatch: []bool{true}},
+			},
+		},
+	}
+
+	got := FormatSearchResults(results, 2, false, "content")
+
+	if !strings.Contains(got, "  --\n") {
+		t.Errorf("expected hunk separator between distant hunks, got:\n%s", got)
 	}
 }
 

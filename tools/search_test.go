@@ -65,6 +65,84 @@ func Test_SearchHandler_BasicSearch(t *testing.T) {
 	}
 }
 
+func Test_SearchHandler_ContextLinesZero(t *testing.T) {
+	h := newTestSearchHandler(t)
+
+	h.ContentIndex.IndexFile("main.go", "before\ntarget line\nafter\n", "Go")
+
+	zero := 0
+	result, _, err := h.Handle(context.Background(), nil, SearchArgs{Query: "target", ContextLines: &zero})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "target line") {
+		t.Errorf("expected match line, got:\n%s", text)
+	}
+	if strings.Contains(text, "before") || strings.Contains(text, "after") {
+		t.Errorf("contextLines=0 must suppress context lines, got:\n%s", text)
+	}
+}
+
+func Test_SearchHandler_DefaultContextLines(t *testing.T) {
+	h := newTestSearchHandler(t)
+
+	h.ContentIndex.IndexFile("main.go", "before\ntarget line\nafter\n", "Go")
+
+	result, _, err := h.Handle(context.Background(), nil, SearchArgs{Query: "target"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "before") || !strings.Contains(text, "after") {
+		t.Errorf("expected default context of 2 lines, got:\n%s", text)
+	}
+}
+
+func Test_SearchHandler_OutputModeFiles(t *testing.T) {
+	h := newTestSearchHandler(t)
+
+	h.ContentIndex.IndexFile("main.go", "target\n", "Go")
+
+	result, _, err := h.Handle(context.Background(), nil, SearchArgs{Query: "target", OutputMode: "files"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if text != "main.go\n" {
+		t.Errorf("expected paths only, got:\n%s", text)
+	}
+}
+
+func Test_SearchHandler_OutputModeInvalid(t *testing.T) {
+	h := newTestSearchHandler(t)
+
+	result, _, err := h.Handle(context.Background(), nil, SearchArgs{Query: "x", OutputMode: "bogus"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected IsError=true for invalid outputMode")
+	}
+}
+
+func Test_SearchHandler_InvalidRegex(t *testing.T) {
+	h := newTestSearchHandler(t)
+
+	h.ContentIndex.IndexFile("main.go", "package main\n", "Go")
+
+	result, _, err := h.Handle(context.Background(), nil, SearchArgs{Query: "/[unclosed/"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected IsError=true for invalid regex")
+	}
+}
+
 func Test_SearchHandler_NoResults(t *testing.T) {
 	h := newTestSearchHandler(t)
 

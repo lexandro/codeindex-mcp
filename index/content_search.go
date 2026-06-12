@@ -2,19 +2,22 @@ package index
 
 import (
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 
-	"github.com/blevesearch/bleve/v2"
-	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-// Search performs a full-text search across all indexed files.
+// Search scans all indexed file contents line by line and returns grep-equivalent results.
 // Query format:
-//   - Plain text: match query (word-level matching)
-//   - "quoted text": phrase query (exact phrase match)
-//   - /regex/: regexp query
-func (ci *ContentIndex) Search(options SearchOptions) ([]ContentSearchResult, int, error) {
+//   - Plain text: literal substring match, case-insensitive by default
+//   - "quoted text": exact literal match, always case-sensitive
+//   - /regex/: Go (RE2) regular expression matched per line, case-insensitive by default
+//
+// The boolean return value reports whether the file limit (MaxResults) was reached
+// while more matching files remained.
+func (ci *ContentIndex) Search(options SearchOptions) ([]ContentSearchResult, int, bool, error) {
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
 
@@ -24,157 +27,158 @@ func (ci *ContentIndex) Search(options SearchOptions) ([]ContentSearchResult, in
 	if options.ContextLines < 0 {
 		options.ContextLines = 0
 	}
-
-	bleveQuery := buildQuery(options.Query)
-
-	searchRequest := bleve.NewSearchRequest(bleveQuery)
-	searchRequest.Size = options.MaxResults * 5 // Get more results because we'll filter and group by file
-	searchRequest.Fields = []string{"path", "language"}
-
-	searchResults, err := ci.index.Search(searchRequest)
-	if err != nil {
-		return nil, 0, fmt.Errorf("searching index: %w", err)
+	if options.MaxMatchesPerFile <= 0 {
+		options.MaxMatchesPerFile = 10
 	}
 
-	// Group results by file and find matching lines
-	resultMap := make(map[string]*ContentSearchResult)
-	var orderedPaths []string
+	matcher, err := buildLineMatcher(options.Query, options.CaseSensitive)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("invalid query: %w", err)
+	}
+
+	paths, err := ci.candidatePaths(options)
+	if err != nil {
+		return nil, 0, false, err
+	}
+
+	var results []ContentSearchResult
 	totalMatches := 0
+	truncated := false
 
-	// Normalize FilePath: backslash to forward slash for cross-platform consistency
-	normalizedFilePath := strings.ReplaceAll(options.FilePath, "\\", "/")
-
-	for _, hit := range searchResults.Hits {
-		relativePath := hit.ID
-		content, ok := ci.fileContents[relativePath]
-		if !ok {
+	for _, path := range paths {
+		entry := ci.files[path]
+		matchLines := matchingLineIndexes(entry.lines, matcher)
+		if len(matchLines) == 0 {
 			continue
 		}
-
-		// Apply file path filter (exact match, overrides FileGlob)
-		if normalizedFilePath != "" {
-			if relativePath != normalizedFilePath {
-				continue
-			}
-		} else if options.FileGlob != "" {
-			// Apply file glob filter if specified
-			normalizedGlob := strings.ReplaceAll(options.FileGlob, "\\", "/")
-			matched, matchErr := doublestar.Match(normalizedGlob, relativePath)
-			if matchErr != nil || !matched {
-				continue
-			}
-		}
-
-		// Find actual matching lines in the content
-		lineMatches := findMatchingLines(content, options.Query, options.ContextLines)
-		if len(lineMatches) == 0 {
-			continue
-		}
-
-		totalMatches += len(lineMatches)
-
-		if _, exists := resultMap[relativePath]; !exists {
-			resultMap[relativePath] = &ContentSearchResult{
-				RelativePath: relativePath,
-			}
-			orderedPaths = append(orderedPaths, relativePath)
-		}
-		resultMap[relativePath].Matches = append(resultMap[relativePath].Matches, lineMatches...)
-
-		if len(orderedPaths) >= options.MaxResults {
+		if len(results) >= options.MaxResults {
+			truncated = true
 			break
 		}
+
+		totalMatches += len(matchLines)
+
+		displayed := matchLines
+		if len(displayed) > options.MaxMatchesPerFile {
+			displayed = displayed[:options.MaxMatchesPerFile]
+		}
+
+		results = append(results, ContentSearchResult{
+			RelativePath: path,
+			MatchCount:   len(matchLines),
+			Hunks:        buildHunks(entry.lines, displayed, matchLines, options.ContextLines),
+		})
 	}
 
-	results := make([]ContentSearchResult, 0, len(orderedPaths))
-	for _, path := range orderedPaths {
-		results = append(results, *resultMap[path])
-	}
-
-	return results, totalMatches, nil
+	return results, totalMatches, truncated, nil
 }
 
-// buildQuery parses the query string into a Bleve query.
-func buildQuery(queryString string) query.Query {
+// buildLineMatcher compiles the query string into a line matcher regexp.
+// Plain text and /regex/ queries are case-insensitive unless caseSensitive is true.
+// "quoted" queries are exact literal matches and always case-sensitive.
+func buildLineMatcher(queryString string, caseSensitive bool) (*regexp.Regexp, error) {
 	queryString = strings.TrimSpace(queryString)
 
-	// Regex query: /pattern/
-	if strings.HasPrefix(queryString, "/") && strings.HasSuffix(queryString, "/") && len(queryString) > 2 {
-		regexPattern := queryString[1 : len(queryString)-1]
-		return bleve.NewRegexpQuery(regexPattern)
+	var pattern string
+	switch {
+	case strings.HasPrefix(queryString, "/") && strings.HasSuffix(queryString, "/") && len(queryString) > 2:
+		pattern = queryString[1 : len(queryString)-1]
+	case strings.HasPrefix(queryString, "\"") && strings.HasSuffix(queryString, "\"") && len(queryString) > 2:
+		return regexp.Compile(regexp.QuoteMeta(queryString[1 : len(queryString)-1]))
+	default:
+		pattern = regexp.QuoteMeta(queryString)
 	}
 
-	// Phrase query: "exact phrase"
-	if strings.HasPrefix(queryString, "\"") && strings.HasSuffix(queryString, "\"") && len(queryString) > 2 {
-		phrase := queryString[1 : len(queryString)-1]
-		return bleve.NewMatchPhraseQuery(phrase)
+	if !caseSensitive {
+		pattern = "(?i)" + pattern
 	}
-
-	// Default: match query (word-level)
-	return bleve.NewMatchQuery(queryString)
+	return regexp.Compile(pattern)
 }
 
-// findMatchingLines searches content line by line for the query terms.
-// Returns LineMatch entries with context lines.
-func findMatchingLines(content string, queryString string, contextLines int) []LineMatch {
-	lines := strings.Split(content, "\n")
-	searchTerm := extractSearchTerm(queryString)
-	searchTermLower := strings.ToLower(searchTerm)
-
-	var matches []LineMatch
-
-	for lineIdx, line := range lines {
-		lineLower := strings.ToLower(line)
-		if !strings.Contains(lineLower, searchTermLower) {
-			continue
+// candidatePaths returns the sorted list of indexed paths that pass the
+// FilePath / FileGlob filters. Caller must hold the read lock.
+func (ci *ContentIndex) candidatePaths(options SearchOptions) ([]string, error) {
+	// Exact file path overrides glob filtering
+	if options.FilePath != "" {
+		normalizedPath := strings.ReplaceAll(options.FilePath, "\\", "/")
+		if _, ok := ci.files[normalizedPath]; ok {
+			return []string{normalizedPath}, nil
 		}
-
-		match := LineMatch{
-			LineNumber: lineIdx + 1, // 1-based
-			LineText:   line,
-		}
-
-		// Gather context lines before
-		if contextLines > 0 {
-			startCtx := lineIdx - contextLines
-			if startCtx < 0 {
-				startCtx = 0
-			}
-			for i := startCtx; i < lineIdx; i++ {
-				match.ContextBefore = append(match.ContextBefore, lines[i])
-			}
-		}
-
-		// Gather context lines after
-		if contextLines > 0 {
-			endCtx := lineIdx + contextLines + 1
-			if endCtx > len(lines) {
-				endCtx = len(lines)
-			}
-			for i := lineIdx + 1; i < endCtx; i++ {
-				match.ContextAfter = append(match.ContextAfter, lines[i])
-			}
-		}
-
-		matches = append(matches, match)
+		return nil, nil
 	}
 
+	var normalizedGlob string
+	if options.FileGlob != "" {
+		normalizedGlob = strings.ReplaceAll(options.FileGlob, "\\", "/")
+		if !doublestar.ValidatePattern(normalizedGlob) {
+			return nil, fmt.Errorf("invalid glob pattern: %s", options.FileGlob)
+		}
+	}
+
+	paths := make([]string, 0, len(ci.files))
+	for path := range ci.files {
+		if normalizedGlob != "" {
+			matched, _ := doublestar.Match(normalizedGlob, path)
+			if !matched {
+				continue
+			}
+		}
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// matchingLineIndexes returns the 0-based indexes of all lines matching the query.
+func matchingLineIndexes(lines []string, matcher *regexp.Regexp) []int {
+	var matches []int
+	for lineIdx, line := range lines {
+		if matcher.MatchString(line) {
+			matches = append(matches, lineIdx)
+		}
+	}
 	return matches
 }
 
-// extractSearchTerm strips query syntax to get the raw search term for line matching.
-func extractSearchTerm(queryString string) string {
-	queryString = strings.TrimSpace(queryString)
-
-	// Strip regex delimiters
-	if strings.HasPrefix(queryString, "/") && strings.HasSuffix(queryString, "/") && len(queryString) > 2 {
-		return queryString[1 : len(queryString)-1]
+// buildHunks groups the displayed matches into contiguous hunks with context lines.
+// Overlapping or adjacent context ranges are merged. allMatches is used to mark
+// match lines that fall inside a hunk even when they are beyond the display cap.
+func buildHunks(lines []string, displayedMatches []int, allMatches []int, contextLines int) []Hunk {
+	if len(displayedMatches) == 0 {
+		return nil
 	}
 
-	// Strip phrase quotes
-	if strings.HasPrefix(queryString, "\"") && strings.HasSuffix(queryString, "\"") && len(queryString) > 2 {
-		return queryString[1 : len(queryString)-1]
+	matchSet := make(map[int]bool, len(allMatches))
+	for _, matchIdx := range allMatches {
+		matchSet[matchIdx] = true
 	}
 
-	return queryString
+	type span struct{ start, end int }
+	var spans []span
+	for _, matchIdx := range displayedMatches {
+		start := matchIdx - contextLines
+		if start < 0 {
+			start = 0
+		}
+		end := matchIdx + contextLines
+		if end > len(lines)-1 {
+			end = len(lines) - 1
+		}
+		if len(spans) > 0 && start <= spans[len(spans)-1].end+1 {
+			spans[len(spans)-1].end = end
+		} else {
+			spans = append(spans, span{start: start, end: end})
+		}
+	}
+
+	hunks := make([]Hunk, 0, len(spans))
+	for _, s := range spans {
+		hunk := Hunk{StartLine: s.start + 1}
+		for lineIdx := s.start; lineIdx <= s.end; lineIdx++ {
+			hunk.Lines = append(hunk.Lines, lines[lineIdx])
+			hunk.IsMatch = append(hunk.IsMatch, matchSet[lineIdx])
+		}
+		hunks = append(hunks, hunk)
+	}
+	return hunks
 }

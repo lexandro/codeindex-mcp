@@ -1,134 +1,92 @@
 package index
 
 import (
-	"fmt"
 	"strings"
 	"sync"
-
-	"github.com/blevesearch/bleve/v2"
-	"github.com/blevesearch/bleve/v2/mapping"
 )
 
-// ContentIndex provides full-text search over file contents using Bleve in-memory index.
+// ContentIndex provides exact, grep-style search over file contents held in memory.
+// All content is stored in RAM and queries scan the stored lines directly, so
+// results have full substring and regex recall (no tokenizer false negatives).
 type ContentIndex struct {
 	mu    sync.RWMutex
-	index bleve.Index
-	// fileContents stores raw content for line-level result extraction
-	fileContents map[string]string // key: relative path, value: file content
+	files map[string]*indexedContent // key: relative path (forward slashes)
 }
 
-// NewContentIndex creates a new in-memory Bleve content index.
-func NewContentIndex() (*ContentIndex, error) {
-	indexMapping := buildIndexMapping()
-	bleveIndex, err := bleve.NewMemOnly(indexMapping)
-	if err != nil {
-		return nil, fmt.Errorf("creating bleve index: %w", err)
-	}
+// indexedContent holds one file's raw content and its pre-split lines.
+// Lines share the backing array of content, so the memory cost is one copy.
+type indexedContent struct {
+	language string
+	content  string
+	lines    []string
+}
 
+// NewContentIndex creates a new empty in-memory content index.
+// The error return value is kept for API stability; it is always nil.
+func NewContentIndex() (*ContentIndex, error) {
 	return &ContentIndex{
-		index:        bleveIndex,
-		fileContents: make(map[string]string),
+		files: make(map[string]*indexedContent),
 	}, nil
 }
 
-// bleveDocument is the document structure stored in Bleve.
-type bleveDocument struct {
-	Content  string `json:"content"`
-	Path     string `json:"path"`
-	Language string `json:"language"`
-}
-
-// buildIndexMapping creates the Bleve index mapping for code content.
-func buildIndexMapping() *mapping.IndexMappingImpl {
-	indexMapping := bleve.NewIndexMapping()
-
-	// Use a simple mapping - let Bleve handle the tokenization
-	docMapping := bleve.NewDocumentMapping()
-
-	contentFieldMapping := bleve.NewTextFieldMapping()
-	contentFieldMapping.Store = false // Don't store content in Bleve; we keep it in fileContents
-	contentFieldMapping.IncludeInAll = true
-	docMapping.AddFieldMappingsAt("content", contentFieldMapping)
-
-	pathFieldMapping := bleve.NewTextFieldMapping()
-	pathFieldMapping.Store = true
-	pathFieldMapping.IncludeInAll = false
-	docMapping.AddFieldMappingsAt("path", pathFieldMapping)
-
-	langFieldMapping := bleve.NewKeywordFieldMapping()
-	langFieldMapping.Store = true
-	langFieldMapping.IncludeInAll = false
-	docMapping.AddFieldMappingsAt("language", langFieldMapping)
-
-	indexMapping.DefaultMapping = docMapping
-	return indexMapping
-}
-
-// ContentSearchResult holds a search match within a file.
+// ContentSearchResult holds all matches within one file.
 type ContentSearchResult struct {
 	RelativePath string
-	Matches      []LineMatch
+	MatchCount   int    // total matching lines in the file (before the per-file display cap)
+	Hunks        []Hunk // context-merged display hunks, capped at MaxMatchesPerFile matches
 }
 
-// LineMatch represents a single line match within a file.
-type LineMatch struct {
-	LineNumber int
-	LineText   string
-	// Context lines before and after the match
-	ContextBefore []string
-	ContextAfter  []string
+// Hunk is a contiguous block of lines containing one or more matches plus context.
+// Overlapping or adjacent match contexts are merged into a single hunk.
+type Hunk struct {
+	StartLine int // 1-based line number of Lines[0]
+	Lines     []string
+	IsMatch   []bool // parallel to Lines; true for lines that match the query
 }
 
 // SearchOptions configures a content search.
 type SearchOptions struct {
-	Query        string
-	FilePath     string // Exact relative path to restrict search to a single file (overrides FileGlob)
-	FileGlob     string
-	MaxResults   int
-	ContextLines int
+	Query             string
+	FilePath          string // Exact relative path to restrict search to a single file (overrides FileGlob)
+	FileGlob          string
+	MaxResults        int  // max number of files returned (default 50)
+	ContextLines      int  // context lines before and after each match
+	MaxMatchesPerFile int  // max matches rendered per file (default 10)
+	CaseSensitive     bool // case-sensitive matching for plain text and regex queries
 }
 
-// IndexFile adds or updates a file's content in the search index.
+// IndexFile adds or updates a file's content in the index.
+// The error return value is kept for API stability; it is always nil.
 func (ci *ContentIndex) IndexFile(relativePath string, content string, language string) error {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
 
-	doc := bleveDocument{
-		Content:  content,
-		Path:     relativePath,
-		Language: language,
-	}
-
-	ci.fileContents[relativePath] = content
-
-	if err := ci.index.Index(relativePath, doc); err != nil {
-		return fmt.Errorf("indexing file %s: %w", relativePath, err)
+	ci.files[relativePath] = &indexedContent{
+		language: language,
+		content:  content,
+		lines:    strings.Split(content, "\n"),
 	}
 	return nil
 }
 
-// RemoveFile removes a file from the search index.
+// RemoveFile removes a file from the index.
 func (ci *ContentIndex) RemoveFile(relativePath string) {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
-
-	delete(ci.fileContents, relativePath)
-	ci.index.Delete(relativePath)
+	delete(ci.files, relativePath)
 }
 
-// DocumentCount returns the number of documents in the Bleve index.
+// DocumentCount returns the number of files in the content index.
 func (ci *ContentIndex) DocumentCount() uint64 {
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
-	count, _ := ci.index.DocCount()
-	return count
+	return uint64(len(ci.files))
 }
 
-// Close closes the Bleve index.
+// Close releases resources. The in-memory index has nothing to release;
+// kept for API stability.
 func (ci *ContentIndex) Close() error {
-	ci.mu.Lock()
-	defer ci.mu.Unlock()
-	return ci.index.Close()
+	return nil
 }
 
 // GetFileContent returns the raw content of an indexed file.
@@ -138,26 +96,18 @@ func (ci *ContentIndex) GetFileContent(relativePath string) (string, bool) {
 	defer ci.mu.RUnlock()
 
 	normalizedPath := strings.ReplaceAll(relativePath, "\\", "/")
-	content, ok := ci.fileContents[normalizedPath]
-	return content, ok
+	entry, ok := ci.files[normalizedPath]
+	if !ok {
+		return "", false
+	}
+	return entry.content, true
 }
 
-// Clear removes all documents and recreates the index.
+// Clear removes all files from the index.
+// The error return value is kept for API stability; it is always nil.
 func (ci *ContentIndex) Clear() error {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
-
-	if err := ci.index.Close(); err != nil {
-		return fmt.Errorf("closing old index: %w", err)
-	}
-
-	indexMapping := buildIndexMapping()
-	newIndex, err := bleve.NewMemOnly(indexMapping)
-	if err != nil {
-		return fmt.Errorf("creating new index: %w", err)
-	}
-
-	ci.index = newIndex
-	ci.fileContents = make(map[string]string)
+	ci.files = make(map[string]*indexedContent)
 	return nil
 }

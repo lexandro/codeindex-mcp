@@ -11,12 +11,13 @@ In-memory [MCP](https://modelcontextprotocol.io/) server for source code indexin
 
 ## Why?
 
-- **Orders of magnitude faster** than `grep`/`find` on large codebases — uses a pre-built in-memory index
-- **Full-text search** powered by Bleve (word, exact phrase, and regex queries)
+- **Orders of magnitude faster** than `grep`/`find` on large codebases — all file contents are served from an in-memory index
+- **Exact grep semantics** — literal substring, exact phrase, and RE2 regex queries with full recall (`mutex` finds `sync.RWMutex`); no tokenizer false negatives
+- **Token-efficient output** — merged context hunks, per-file match caps, and `files`/`count` output modes designed for AI agents
 - **Glob-based file search** with `**` doublestar support
-- **Auto-updating** — a background file watcher keeps the index in sync with disk
-- **Configurable filtering** — respects `.gitignore`, `.claudeignore`, and custom exclude patterns
-- **Single binary** — no runtime dependencies; ~18 MB lightweight build, ~31 MB full AST build (includes tree-sitter grammars)
+- **Auto-updating** — a background file watcher plus periodic sync verification keep the index consistent with disk
+- **Configurable filtering** — respects `.gitignore` and `.claudeignore` at every directory level, plus custom exclude patterns
+- **Single binary** — no runtime dependencies; lightweight build has zero CGo, full AST build includes tree-sitter grammars
 
 ## Quick start
 
@@ -174,10 +175,10 @@ Claude Code will then automatically use `codeindex_search`, `codeindex_files`, `
 | `--force-include PATTERN` | _(none)_ | Force-include pattern that overrides all excludes, repeatable (e.g. `--force-include "*.log"`) |
 | `--max-file-size N` | `1048576` (1 MB) | Maximum file size in bytes; larger files are skipped |
 | `--max-results N` | `50` | Default maximum number of search results |
-| `--log-enabled` | `true` | Enable logging (`false` disables all log output, no log file is created) |
+| `--log-enabled` | `false` | Enable logging (no log file is created when disabled) |
 | `--log-level LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `--log-file PATH` | `<root>/codeindex-mcp.log` | Log file path |
-| `--sync-interval N` | `0` (disabled) | Periodic index sync verification interval in seconds (0 = disabled) |
+| `--sync-interval N` | `300` | Periodic index sync verification interval in seconds (0 = disabled) |
 | `--ast` | `false` | Enable AST symbol indexing (adds 5 `codeindex_ast_*` tools) |
 | `--ast-languages LIST` | `go,typescript,python,javascript` | Languages to AST-index. In the lightweight build only `go` is available; `typescript`, `python`, `javascript` require `-tags ast` |
 | `--ast-max-file-size-kb N` | `500` | Maximum file size in KB to AST-index |
@@ -204,14 +205,11 @@ Claude Code will then automatically use `codeindex_search`, `codeindex_files`, `
   --exclude "*.generated.go" \
   --force-include "*.log"
 
-# Disable logging entirely (no log file created)
-./codeindex-mcp --root . --log-enabled=false
+# Enable debug logging to a specific file
+./codeindex-mcp --root . --log-enabled --log-level debug --log-file /tmp/codeindex.log
 
-# Debug logging to a specific file
-./codeindex-mcp --root . --log-level debug --log-file /tmp/codeindex.log
-
-# Enable periodic sync verification every 5 minutes
-./codeindex-mcp --root . --sync-interval 300
+# Disable periodic sync verification (enabled every 300s by default)
+./codeindex-mcp --root . --sync-interval 0
 
 # Allow larger files (5 MB)
 ./codeindex-mcp --root . --max-file-size 5242880
@@ -229,7 +227,7 @@ The server registers 5 tools:
 
 ### 1. `codeindex_search` — Content search
 
-Full-text search across all indexed file contents.
+Grep-equivalent search across all indexed file contents, served from memory.
 
 **Parameters:**
 
@@ -239,32 +237,41 @@ Full-text search across all indexed file contents.
 | `filePath` | string | no | Exact relative path to search in a single file (overrides `fileGlob`) |
 | `fileGlob` | string | no | Glob pattern to filter files (e.g. `**/*.go`) |
 | `maxResults` | int | no | Maximum number of file results (default: 50) |
-| `contextLines` | int | no | Context lines before/after each match (default: 2) |
+| `contextLines` | int | no | Context lines before/after each match (default: 2, `0` = matching lines only) |
+| `maxMatchesPerFile` | int | no | Maximum matches rendered per file (default: 10); the real total is still reported |
+| `outputMode` | string | no | `content` (default) = hunks with line numbers; `files` = paths only; `count` = paths with match counts |
+| `caseSensitive` | bool | no | Case-sensitive matching for plain text and regex queries (default: false) |
 
 **Query formats:**
 
 | Format | Example | Behavior |
 |--------|---------|----------|
-| Plain text | `handleRequest` | Word-level matching (Bleve MatchQuery) |
-| `"quoted"` | `"func main"` | Exact phrase matching (PhraseQuery) |
-| `/regex/` | `/func\s+\w+Handler/` | Regular expression (RegexpQuery) |
+| Plain text | `handleRequest` | Literal substring match, case-insensitive — full recall, `mutex` finds `sync.RWMutex` |
+| `"quoted"` | `"func main"` | Exact literal match, case-sensitive |
+| `/regex/` | `/func\s+\w+Handler/` | RE2 regular expression, matched per line, case-insensitive by default |
 
-**Example output:**
+**Example output** (`content` mode — `N:` marks a match, `N-` marks context, `--` separates hunks):
 
 ```
 3 matches in 2 files:
 main.go
-  4: import "fmt"
-  5:
+  4- import "fmt"
+  5-
   6: func main() {
-  7:     fmt.Println("hello world")
-  8: }
+  7-     fmt.Println("hello world")
+  --
+  21- // entry helper
+  22: func mainHelper() {
+  23-     setup()
+  ... +4 more matches
 
 server/server.go
+  13-
   14: func main() {
-  15:     startServer()
-  16: }
+  15-     startServer()
 ```
+
+`files` mode returns one path per line; `count` mode returns `path: matchCount` per line — both save tokens when you only need locations.
 
 ### 2. `codeindex_files` — File search
 
@@ -319,9 +326,12 @@ Display current index statistics.
 
 ```
 root: /home/user/myproject
+version: 0.6.0
 uptime: 45s
 files: 1234 (8.5 MB)
-memory: 95.2 MB
+memory: 24.7 MB
+watcher: 87 dirs
+sync: every 300s
 languages: TypeScript:456, Go:312, JavaScript:189, Python:98
 ```
 
@@ -463,14 +473,15 @@ Automatically skipped without any configuration:
 | Cache | `.cache`, `.next`, `.nuxt`, `.parcel-cache` |
 | Logs | `*.log` |
 | Database | `*.sqlite`, `*.sqlite3`, `*.db` |
+| Env / secrets | `.env`, `.env.*`, `*.env` (use `--force-include` to index intentionally) |
 
 ### 2. `.gitignore` support
 
-Fully respects `.gitignore` patterns in the project root, including globs, negation (`!important.log`), and directory-specific patterns.
+Fully respects `.gitignore` patterns **at every directory level** (nested `.gitignore` files included), with globs, negation (`!important.log`), and git's precedence rule: the ignore file closest to a path wins.
 
 ### 3. `.claudeignore` support
 
-A `.claudeignore` file in the project root uses the same syntax as `.gitignore`. Use it to exclude files from the index that you want in git but are not relevant for AI code search.
+`.claudeignore` files use the same syntax and the same hierarchical matching as `.gitignore`. Use them to exclude files from the index that you want in git but are not relevant for AI code search.
 
 Example `.claudeignore`:
 ```
@@ -535,32 +546,35 @@ MCP Client (stdio) <──> MCP Server <──> Index Engine
                                             │
                                     ┌───────┼────────┐
                                     │       │        │
-                                  Bleve   FileMap   Watcher
-                               (full-text) (path)  (fsnotify)
+                                ContentMap FileMap  Watcher
+                               (line scan) (path)  (fsnotify)
 ```
 
 ### Dual index design
 
 | Index | Technology | Purpose |
 |-------|-----------|---------|
-| **Content Index** | Bleve `NewMemOnly()` | Full-text search over file contents (inverted index) |
+| **Content Index** | Go `map` of pre-split lines | Exact grep-style content search (substring / phrase / RE2 regex), scanned entirely in memory |
 | **File Path Index** | Go `map` + sorted slice | File name/path search with glob patterns |
+
+There is no tokenizer or inverted index in the search path: queries are compiled to a single RE2 matcher and scanned over the in-memory lines. This guarantees grep-identical results (no recall gaps for substrings inside identifiers) while staying far faster than disk-based grep.
 
 ### File watcher
 
 - Uses **fsnotify** (on Windows: `ReadDirectoryChangesW` API)
 - Recursive: watches all non-ignored subdirectories at startup
 - **100ms debounce window**: editors generate multiple events on save — these are collapsed into one
-- Automatically watches newly created directories
-- Automatically reloads ignore rules when `.gitignore` or `.claudeignore` changes
+- Newly created directory trees are watched **recursively** and files already inside them are indexed (covers copy / unzip / `git checkout` bursts)
+- Automatically reloads ignore rules when any `.gitignore` or `.claudeignore` changes, then re-syncs the index against the new rules
+- A periodic sync verification (default: every 300s) heals any missed events by diffing the index against disk
 
 ### Startup sequence
 
 1. Parse CLI flags
-2. Create ignore matcher (built-in + .gitignore + .claudeignore + CLI patterns)
-3. Initialize Bleve in-memory index and file path index
+2. Create ignore matcher (built-in + hierarchical .gitignore/.claudeignore + CLI patterns)
+3. Initialize in-memory content index and file path index
 4. Parallel indexing with 8 worker goroutines
-5. Start file watcher
+5. Start file watcher and periodic sync verification
 6. Start MCP server on stdio transport
 
 ## Project structure
@@ -573,8 +587,8 @@ codeindex-mcp/
 ├── server/
 │   └── server.go            # MCP server setup, tool registration
 ├── index/
-│   ├── content.go           # Bleve content index (CRUD operations)
-│   ├── content_search.go    # Full-text search logic, query parsing
+│   ├── content.go           # In-memory content index (CRUD operations)
+│   ├── content_search.go    # Line-scan search logic, query parsing, hunk building
 │   ├── content_test.go
 │   ├── files.go             # File path index (glob search) + IndexedFile type
 │   └── files_test.go
@@ -624,7 +638,6 @@ codeindex-mcp/
 | Library | Version | Purpose |
 |---------|---------|---------|
 | [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | v1.3.0 | MCP server (stdio transport) |
-| [blevesearch/bleve/v2](https://github.com/blevesearch/bleve) | v2.5.7 | In-memory full-text search |
 | [fsnotify/fsnotify](https://github.com/fsnotify/fsnotify) | v1.9.0 | File system watching |
 | [bmatcuk/doublestar/v4](https://github.com/bmatcuk/doublestar) | v4.10.0 | `**` glob support |
 | [denormal/go-gitignore](https://github.com/denormal/go-gitignore) | latest | .gitignore / .claudeignore parsing |
@@ -637,12 +650,13 @@ codeindex-mcp/
 
 | Metric | ~5k files | ~10k files |
 |--------|-----------|------------|
-| Initial indexing | ~1-2s | ~2-3s |
-| Memory usage | ~75-100 MB | ~180-230 MB |
-| Text search | <5ms | <10ms |
-| Regex search | <50ms | <50ms |
+| Initial indexing | ~1s | ~1-2s |
+| Memory usage | ≈ 2× total indexed file size | ≈ 2× total indexed file size |
+| Text / regex search | <30ms | <60ms |
 | Glob search | <2ms | <5ms |
-| Incremental update | <10ms/file | <10ms/file |
+| Incremental update | <5ms/file | <5ms/file |
+
+Search is a linear in-memory scan compiled to a single RE2 matcher — no inverted index to build or keep consistent, so indexing is fast and memory stays close to the raw corpus size.
 
 ## Supported languages
 

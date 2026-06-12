@@ -19,3 +19,7 @@ clau.bat
 # OS
 .DS_Store
 Thumbs.db
+
+# Local MCP / Claude config
+.mcp.json
+.claude/

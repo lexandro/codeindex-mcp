@@ -5,10 +5,10 @@ In-memory MCP server for source code indexing. Replaces grep/find with fast inde
 ## Tech Stack
 - Language: Go 1.22+
 - MCP SDK: github.com/modelcontextprotocol/go-sdk
-- Search: github.com/blevesearch/bleve/v2 (NewMemOnly)
+- Search: pure in-memory line scan over pre-split file contents (RE2 matcher per query, exact grep semantics)
 - File watching: github.com/fsnotify/fsnotify
 - Glob: github.com/bmatcuk/doublestar/v4
-- Gitignore: github.com/denormal/go-gitignore
+- Gitignore: github.com/denormal/go-gitignore (io.Reader constructor only — the file-based constructors leak handles on Windows)
 
 ## Build & Test
 - Build: `go build -o codeindex-mcp.exe .`
@@ -20,7 +20,7 @@ In-memory MCP server for source code indexing. Replaces grep/find with fast inde
 - `main.go` - Entry point, CLI flag parsing, component wiring
 - `indexing.go` - Directory walking, parallel file indexing, watcher event handling
 - `server/` - MCP server setup, tool registration (stdio transport)
-- `index/` - Dual index: Bleve content index + file path index
+- `index/` - Dual index: in-memory content index (line scan) + file path index
 - `watcher/` - Recursive fsnotify wrapper with debouncing
 - `ignore/` - .gitignore + .claudeignore + default + custom ignore patterns + force-include overrides
 - `tools/` - MCP tool handlers (search, files, status, reindex, read)
@@ -91,7 +91,7 @@ The goal: any AI agent can read, understand, and correctly modify any file in is
 - Test public API of each package, not internal functions
 - Table-driven tests for input/output variations
 - Test files use testdata/ subdirectory for fixture files
-- No mocks unless testing against external I/O (filesystem) - use real Bleve in-memory index in tests
+- No mocks unless testing against external I/O (filesystem) - use the real in-memory content index in tests
 - Test names: Test_FunctionName_Scenario (e.g., Test_SearchContent_RegexQuery)
 
 ### 10. When Traditional Principles DO Apply

@@ -180,6 +180,9 @@ func handleWatcherEvents(
 				baseName := filepath.Base(event.Path)
 				if baseName == ".gitignore" || baseName == ".claudeignore" {
 					ignoreMatcher.Reload()
+					// Apply the new rules to the existing index: drop newly-ignored
+					// files and pick up newly-unignored ones.
+					performSyncVerification(rootDir, fileIndex, contentIndex, ignoreMatcher, astModule, logger)
 					logger.Info("reloaded ignore rules", "trigger", baseName)
 					continue
 				}

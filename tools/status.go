@@ -22,7 +22,11 @@ type StatusHandler struct {
 	ContentIndex *index.ContentIndex
 	StartTime    time.Time
 	RootDir      string
-	Logger       *slog.Logger
+	Version      string
+	// WatchedDirs reports how many directories the file watcher covers; nil when the watcher failed to start.
+	WatchedDirs         func() int
+	SyncIntervalSeconds int
+	Logger              *slog.Logger
 }
 
 // Handle processes a codeindex_status request.
@@ -45,9 +49,22 @@ func (h *StatusHandler) Handle(ctx context.Context, req *mcp.CallToolRequest, ar
 	)
 
 	builder.WriteString(fmt.Sprintf("root: %s\n", h.RootDir))
+	if h.Version != "" {
+		builder.WriteString(fmt.Sprintf("version: %s\n", h.Version))
+	}
 	builder.WriteString(fmt.Sprintf("uptime: %s\n", formatDuration(uptime)))
 	builder.WriteString(fmt.Sprintf("files: %d (%s)\n", fileCount, formatFileSize(totalSize)))
 	builder.WriteString(fmt.Sprintf("memory: %s\n", formatFileSize(int64(memStats.Alloc))))
+	if h.WatchedDirs != nil {
+		builder.WriteString(fmt.Sprintf("watcher: %d dirs\n", h.WatchedDirs()))
+	} else {
+		builder.WriteString("watcher: not running\n")
+	}
+	if h.SyncIntervalSeconds > 0 {
+		builder.WriteString(fmt.Sprintf("sync: every %ds\n", h.SyncIntervalSeconds))
+	} else {
+		builder.WriteString("sync: disabled\n")
+	}
 
 	if len(langCounts) > 0 {
 		type langEntry struct {

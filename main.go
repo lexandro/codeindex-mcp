@@ -67,8 +67,8 @@ func main() {
 	flag.IntVar(&maxResults, "max-results", 50, "Default max search results (default: 50)")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level: debug|info|warn|error")
 	flag.StringVar(&logFile, "log-file", "", "Log file path (default: codeindex-mcp.log in root dir)")
-	flag.BoolVar(&logEnabled, "log-enabled", true, "Enable logging (default: true, set to false to disable all logging)")
-	flag.IntVar(&syncInterval, "sync-interval", 0, "Periodic sync interval in seconds (0 = disabled)")
+	flag.BoolVar(&logEnabled, "log-enabled", false, "Enable logging (default: false)")
+	flag.IntVar(&syncInterval, "sync-interval", 300, "Periodic sync interval in seconds (default: 300, 0 = disabled)")
 	flag.BoolVar(&astEnabled, "ast", false, "Enable AST symbol indexing (requires CGo-built binary)")
 	flag.StringVar(&astLanguages, "ast-languages", "go,typescript,python,javascript", "Comma-separated languages for AST indexing")
 	flag.IntVar(&astMaxFileSizeKB, "ast-max-file-size-kb", 500, "Max file size in KB for AST parsing (default: 500)")
@@ -178,11 +178,16 @@ func main() {
 	searchHandler := &tools.SearchHandler{ContentIndex: contentIndex, Logger: logger}
 	filesHandler := &tools.FilesHandler{FileIndex: fileIndex, Logger: logger}
 	statusHandler := &tools.StatusHandler{
-		FileIndex:    fileIndex,
-		ContentIndex: contentIndex,
-		StartTime:    startTime,
-		RootDir:      rootDir,
-		Logger:       logger,
+		FileIndex:           fileIndex,
+		ContentIndex:        contentIndex,
+		StartTime:           startTime,
+		RootDir:             rootDir,
+		Version:             server.Version,
+		SyncIntervalSeconds: syncInterval,
+		Logger:              logger,
+	}
+	if fileWatcher != nil {
+		statusHandler.WatchedDirs = fileWatcher.WatchedDirCount
 	}
 	readHandler := &tools.ReadHandler{ContentIndex: contentIndex, Logger: logger}
 	reindexHandler := &tools.ReindexHandler{

@@ -93,16 +93,15 @@ func (w *Watcher) Start() {
 func (w *Watcher) handleEvent(event fsnotify.Event) {
 	path := event.Name
 
-	// If a new directory was created, start watching it
+	// If a new directory was created, watch it recursively and index any files
+	// already inside it (a copied/extracted tree arrives faster than watches attach).
 	if event.Has(fsnotify.Create) {
 		info, err := os.Stat(path)
 		if err == nil && info.IsDir() {
 			if !w.ignoreChecker.ShouldIgnoreDir(path) {
-				if err := w.fsWatcher.Add(path); err != nil {
-					w.logger.Warn("failed to watch new directory", "path", path, "error", err)
-				}
+				w.watchRecursive(path)
 			}
-			return // Don't emit events for directory creation
+			return // Don't emit events for directory creation itself
 		}
 	}
 
@@ -126,6 +125,34 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	}
 
 	w.debouncer.Add(path, op)
+}
+
+// watchRecursive adds watches for root and all non-ignored subdirectories,
+// and emits create events for files already present so they get indexed.
+func (w *Watcher) watchRecursive(root string) {
+	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if path != root && w.ignoreChecker.ShouldIgnoreDir(path) {
+				return filepath.SkipDir
+			}
+			if addErr := w.fsWatcher.Add(path); addErr != nil {
+				w.logger.Warn("failed to watch new directory", "path", path, "error", addErr)
+			}
+			return nil
+		}
+		if !w.ignoreChecker.ShouldIgnore(path) {
+			w.debouncer.Add(path, OpCreate)
+		}
+		return nil
+	})
+}
+
+// WatchedDirCount returns the number of directories currently being watched.
+func (w *Watcher) WatchedDirCount() int {
+	return len(w.fsWatcher.WatchList())
 }
 
 // Close stops the watcher and releases resources.

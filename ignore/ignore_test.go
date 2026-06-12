@@ -302,3 +302,80 @@ func Test_Matcher_ForceInclude_GitAlwaysPruned(t *testing.T) {
 		t.Error("expected .git/ to ALWAYS be pruned regardless of force-include")
 	}
 }
+
+func Test_Matcher_NestedGitignore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Root .gitignore ignores *.generated.go; nested sub/.gitignore ignores *.draft.md
+	os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte("*.generated.go\n"), 0644)
+	os.MkdirAll(filepath.Join(tmpDir, "sub"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "sub", ".gitignore"), []byte("*.draft.md\n"), 0644)
+
+	matcher := NewMatcher(MatcherOptions{RootDir: tmpDir})
+
+	if !matcher.ShouldIgnore(filepath.Join(tmpDir, "sub", "notes.draft.md")) {
+		t.Error("expected nested .gitignore pattern to ignore sub/notes.draft.md")
+	}
+	if matcher.ShouldIgnore(filepath.Join(tmpDir, "notes.draft.md")) {
+		t.Error("expected nested pattern to NOT apply outside its directory")
+	}
+	if !matcher.ShouldIgnore(filepath.Join(tmpDir, "sub", "models.generated.go")) {
+		t.Error("expected root .gitignore pattern to apply in subdirectories")
+	}
+}
+
+func Test_Matcher_NestedGitignore_Negation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Root ignores all *.log; nested .gitignore re-includes keep.log
+	os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte("*.keepme\n"), 0644)
+	os.MkdirAll(filepath.Join(tmpDir, "sub"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "sub", ".gitignore"), []byte("!important.keepme\n"), 0644)
+
+	matcher := NewMatcher(MatcherOptions{RootDir: tmpDir})
+
+	if matcher.ShouldIgnore(filepath.Join(tmpDir, "sub", "important.keepme")) {
+		t.Error("expected nested negation to re-include sub/important.keepme")
+	}
+	if !matcher.ShouldIgnore(filepath.Join(tmpDir, "other.keepme")) {
+		t.Error("expected root pattern to still ignore other.keepme")
+	}
+}
+
+func Test_Matcher_NestedGitignore_Reload(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, "sub"), 0755)
+
+	matcher := NewMatcher(MatcherOptions{RootDir: tmpDir})
+
+	target := filepath.Join(tmpDir, "sub", "notes.draft.md")
+	if matcher.ShouldIgnore(target) {
+		t.Fatal("expected file not to be ignored before nested .gitignore exists")
+	}
+
+	os.WriteFile(filepath.Join(tmpDir, "sub", ".gitignore"), []byte("*.draft.md\n"), 0644)
+	matcher.Reload()
+
+	if !matcher.ShouldIgnore(target) {
+		t.Error("expected Reload to pick up newly created nested .gitignore")
+	}
+}
+
+func Test_Matcher_DefaultPatterns_EnvFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	matcher := NewMatcher(MatcherOptions{RootDir: tmpDir})
+
+	ignored := []string{".env", ".env.local", ".env.production", "local.env", "secrets.env"}
+	for _, name := range ignored {
+		if !matcher.ShouldIgnore(filepath.Join(tmpDir, name)) {
+			t.Errorf("expected %s to be ignored by default", name)
+		}
+	}
+
+	notIgnored := []string{"environment.go", "env_config.yaml", ".envrc.example.txt"}
+	for _, name := range notIgnored {
+		if matcher.ShouldIgnore(filepath.Join(tmpDir, name)) {
+			t.Errorf("expected %s to NOT be ignored", name)
+		}
+	}
+}

@@ -3,6 +3,7 @@ package ignore
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -11,15 +12,23 @@ import (
 
 // Matcher determines whether a file path should be ignored during indexing.
 // It combines default patterns, .gitignore rules, .claudeignore rules, and custom CLI patterns.
+// Ignore files are matched hierarchically: nested .gitignore/.claudeignore files in
+// subdirectories are respected, with deeper files taking precedence (standard git behavior).
 // Thread-safe: Reload() acquires a write lock, ShouldIgnore()/ShouldIgnoreDir() acquire a read lock.
 type Matcher struct {
 	mu                   sync.RWMutex
 	rootDir              string
-	gitIgnore            gitignore.GitIgnore
-	claudeIgnore         gitignore.GitIgnore
+	gitIgnores           []scopedIgnore
+	claudeIgnores        []scopedIgnore
 	customPatterns       []string
 	forceIncludePatterns []string
 	maxFileSizeBytes     int64
+}
+
+// scopedIgnore is one ignore file's matcher bound to the directory that contains it.
+type scopedIgnore struct {
+	dirRelPath string // directory containing the ignore file, relative to root ("" = root, forward slashes)
+	matcher    gitignore.GitIgnore
 }
 
 // MatcherOptions configures the ignore matcher.
@@ -43,11 +52,8 @@ func NewMatcher(options MatcherOptions) *Matcher {
 		matcher.maxFileSizeBytes = 1024 * 1024 // 1MB default
 	}
 
-	// Load .gitignore from project root
-	matcher.gitIgnore = loadIgnoreFile(filepath.Join(options.RootDir, ".gitignore"), options.RootDir)
-
-	// Load .claudeignore from project root
-	matcher.claudeIgnore = loadIgnoreFile(filepath.Join(options.RootDir, ".claudeignore"), options.RootDir)
+	matcher.gitIgnores = loadIgnoreHierarchy(options.RootDir, ".gitignore")
+	matcher.claudeIgnores = loadIgnoreHierarchy(options.RootDir, ".claudeignore")
 
 	return matcher
 }
@@ -82,20 +88,18 @@ func (m *Matcher) ShouldIgnore(absolutePath string) bool {
 		isDir = info.IsDir()
 	}
 
-	// Check .gitignore using Relative() which doesn't require the file to exist on disk
-	if m.gitIgnore != nil {
-		match := m.gitIgnore.Relative(relativePath, isDir)
-		if match != nil && match.Ignore() {
+	// Check .gitignore hierarchy (deepest ignore file wins, like git)
+	if ignored, matched := matchScopedIgnores(m.gitIgnores, relativePath, isDir); matched {
+		if ignored {
 			return true
 		}
+		// An explicit negation (re-include) in .gitignore still falls through
+		// to .claudeignore and custom patterns, matching previous behavior.
 	}
 
-	// Check .claudeignore using Relative()
-	if m.claudeIgnore != nil {
-		match := m.claudeIgnore.Relative(relativePath, isDir)
-		if match != nil && match.Ignore() {
-			return true
-		}
+	// Check .claudeignore hierarchy
+	if ignored, matched := matchScopedIgnores(m.claudeIgnores, relativePath, isDir); matched && ignored {
+		return true
 	}
 
 	// Check custom CLI patterns
@@ -134,6 +138,18 @@ func (m *Matcher) ShouldIgnoreDir(absolutePath string) bool {
 	}
 
 	// Fast check: common directories that should always be skipped
+	if isAlwaysSkippedDirName(dirName) {
+		return true
+	}
+
+	// Full ignore check (includes .gitignore, .claudeignore, custom patterns)
+	// ShouldIgnore acquires the read lock internally
+	return m.ShouldIgnore(absolutePath)
+}
+
+// isAlwaysSkippedDirName reports whether a directory name is so common and so
+// useless for code search that it is pruned without consulting ignore files.
+func isAlwaysSkippedDirName(dirName string) bool {
 	switch dirName {
 	case ".svn", ".hg", "node_modules", "__pycache__",
 		".idea", ".vscode", ".vs", ".next", ".nuxt",
@@ -141,10 +157,7 @@ func (m *Matcher) ShouldIgnoreDir(absolutePath string) bool {
 		".venv", "venv", ".env":
 		return true
 	}
-
-	// Full ignore check (includes .gitignore, .claudeignore, custom patterns)
-	// ShouldIgnore acquires the read lock internally
-	return m.ShouldIgnore(absolutePath)
+	return false
 }
 
 // IsFileTooLarge returns true if the file exceeds the max file size limit.
@@ -254,20 +267,96 @@ func (m *Matcher) couldContainForceIncluded(relativeDirPath string) bool {
 	return false
 }
 
-// Reload re-reads .gitignore and .claudeignore files from disk.
+// Reload re-reads all .gitignore and .claudeignore files from disk (at every depth).
 // Used when the watcher detects changes to these files.
 func (m *Matcher) Reload() {
-	newGitIgnore := loadIgnoreFile(filepath.Join(m.rootDir, ".gitignore"), m.rootDir)
-	newClaudeIgnore := loadIgnoreFile(filepath.Join(m.rootDir, ".claudeignore"), m.rootDir)
+	newGitIgnores := loadIgnoreHierarchy(m.rootDir, ".gitignore")
+	newClaudeIgnores := loadIgnoreHierarchy(m.rootDir, ".claudeignore")
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.gitIgnore = newGitIgnore
-	m.claudeIgnore = newClaudeIgnore
+	m.gitIgnores = newGitIgnores
+	m.claudeIgnores = newClaudeIgnores
+}
+
+// loadIgnoreHierarchy walks the tree under rootDir and loads every ignore file named
+// fileName into a scoped matcher. The result is sorted deepest-first, so iterating in
+// order gives git's precedence rule: the ignore file closest to the path wins.
+func loadIgnoreHierarchy(rootDir string, fileName string) []scopedIgnore {
+	var scoped []scopedIgnore
+
+	filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if path != rootDir && (d.Name() == ".git" || isAlwaysSkippedDirName(d.Name())) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() != fileName {
+			return nil
+		}
+
+		containingDir := filepath.Dir(path)
+		matcher := loadIgnoreFile(path, containingDir)
+		if matcher == nil {
+			return nil
+		}
+
+		dirRelPath, relErr := filepath.Rel(rootDir, containingDir)
+		if relErr != nil {
+			return nil
+		}
+		dirRelPath = filepath.ToSlash(dirRelPath)
+		if dirRelPath == "." {
+			dirRelPath = ""
+		}
+		scoped = append(scoped, scopedIgnore{dirRelPath: dirRelPath, matcher: matcher})
+		return nil
+	})
+
+	sort.Slice(scoped, func(i, j int) bool {
+		return ignoreDirDepth(scoped[i].dirRelPath) > ignoreDirDepth(scoped[j].dirRelPath)
+	})
+	return scoped
+}
+
+// ignoreDirDepth returns the directory depth of a root-relative path ("" = 0, "a" = 1, "a/b" = 2).
+func ignoreDirDepth(dirRelPath string) int {
+	if dirRelPath == "" {
+		return 0
+	}
+	return strings.Count(dirRelPath, "/") + 1
+}
+
+// matchScopedIgnores matches a root-relative path against a deepest-first list of
+// scoped ignore matchers. It returns (ignored, matched): matched is true when any
+// ignore file had a pattern matching the path, and ignored is that pattern's verdict.
+// The first (deepest) matching ignore file decides, like git.
+func matchScopedIgnores(scoped []scopedIgnore, relativePath string, isDir bool) (bool, bool) {
+	for _, s := range scoped {
+		subPath := relativePath
+		if s.dirRelPath != "" {
+			prefix := s.dirRelPath + "/"
+			if !strings.HasPrefix(relativePath, prefix) {
+				continue
+			}
+			subPath = relativePath[len(prefix):]
+		}
+
+		match := s.matcher.Relative(subPath, isDir)
+		if match != nil {
+			return match.Ignore(), true
+		}
+	}
+	return false, false
 }
 
 // loadIgnoreFile reads an ignore file and creates a GitIgnore matcher from it.
-// Uses io.Reader approach to ensure the file handle is properly closed on Windows.
+// Uses the io.Reader approach so the file handle is explicitly closed — the
+// library's file-based constructors leak the handle, which locks files on Windows.
 func loadIgnoreFile(filePath string, baseDir string) gitignore.GitIgnore {
 	f, err := os.Open(filePath)
 	if err != nil {

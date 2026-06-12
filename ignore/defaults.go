@@ -43,7 +43,11 @@ var DefaultIgnorePatterns = []string{
 	"*.pyo",
 	".venv",
 	"venv",
+
+	// Env / secrets files (use --force-include to index intentionally)
 	".env",
+	".env.*",
+	"*.env",
 
 	// Go (vendor already listed above)
 

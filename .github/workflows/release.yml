@@ -36,3 +36,39 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-global-cache
           ZIG_LOCAL_CACHE_DIR: ${{ runner.temp }}/zig-local-cache
+
+  # The full-AST darwin binaries cannot be cross-linked from Linux (Go links
+  # libresolv and Apple frameworks zig has no stubs for), so build them
+  # natively on macOS and attach them to the release GoReleaser created.
+  darwin-ast:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build and upload darwin AST binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          for ARCH in arm64 amd64; do
+            CGO_ENABLED=1 GOARCH="$ARCH" go build -tags ast -trimpath -ldflags "-s -w" -o codeindex-mcp-ast .
+            ARCHIVE="codeindex-mcp-ast_${VERSION}_darwin_${ARCH}.tar.gz"
+            tar -czf "$ARCHIVE" codeindex-mcp-ast LICENSE README.md
+            rm codeindex-mcp-ast
+          done
+          gh release upload "$GITHUB_REF_NAME" codeindex-mcp-ast_*.tar.gz
+
+      - name: Append darwin archives to checksums.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release download "$GITHUB_REF_NAME" --pattern checksums.txt
+          shasum -a 256 codeindex-mcp-ast_*.tar.gz >> checksums.txt
+          gh release upload "$GITHUB_REF_NAME" checksums.txt --clobber

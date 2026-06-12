@@ -21,15 +21,15 @@ builds:
     ldflags:
       - -s -w
 
-  # Full build — CGo + tree-sitter, all 4 languages
-  # netgo: Go 1.21+ links libresolv on darwin via the cgo DNS resolver;
-  # zig has no macOS resolv stub and this stdio server never does DNS,
-  # so force the pure-Go resolver on all platforms
+  # Full build — CGo + tree-sitter, all 4 languages.
+  # darwin is excluded here: Go's runtime links libresolv and Apple
+  # frameworks that zig cannot cross-link from Linux. The darwin AST
+  # binaries are built natively on a macOS runner in release.yml and
+  # uploaded to the same release.
   - id: full
     binary: codeindex-mcp-ast
     tags:
       - ast
-      - netgo
     env:
       - CGO_ENABLED=1
       - >-
@@ -37,15 +37,10 @@ builds:
         {{- if eq .Arch "amd64" -}}CC=zig cc -target x86_64-linux-musl
         {{- else -}}CC=zig cc -target aarch64-linux-musl
         {{- end -}}
-        {{- else if eq .Os "darwin" -}}
-        {{- if eq .Arch "amd64" -}}CC=zig cc -target x86_64-macos
-        {{- else -}}CC=zig cc -target aarch64-macos
-        {{- end -}}
         {{- else if eq .Os "windows" -}}CC=zig cc -target x86_64-windows-gnu
         {{- end -}}
     goos:
       - linux
-      - darwin
       - windows
     goarch:
       - amd64

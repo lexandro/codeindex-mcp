@@ -20,9 +20,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # zig 0.13 cannot cross-compile CGo to macOS ("unable to create
+      # compilation: AccessDenied", ziglang/zig#20689) - fixed in 0.14
       - uses: goto-bus-stop/setup-zig@v2
         with:
-          version: "0.13.0"
+          version: "0.14.1"
 
       - uses: goreleaser/goreleaser-action@v6
         with:

@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/lexandro/codeindex-mcp/ast"
 	"github.com/lexandro/codeindex-mcp/ignore"
 	"github.com/lexandro/codeindex-mcp/index"
+	"github.com/lexandro/codeindex-mcp/language"
 	"github.com/lexandro/codeindex-mcp/register"
 	"github.com/lexandro/codeindex-mcp/server"
 	"github.com/lexandro/codeindex-mcp/tools"
@@ -189,7 +191,67 @@ func main() {
 	if fileWatcher != nil {
 		statusHandler.WatchedDirs = fileWatcher.WatchedDirCount
 	}
-	readHandler := &tools.ReadHandler{ContentIndex: contentIndex, Logger: logger}
+	// diskFallback is codeindex_read's last resort: when a file is missing from
+	// the index, read it straight from disk and, if eligible, add it back in.
+	diskFallback := func(relativePath string) (string, tools.DiskFallbackStatus) {
+		// The path comes from an AI tool call, so confine it to the project root.
+		absPath := filepath.Join(rootDir, filepath.Clean(filepath.FromSlash(relativePath)))
+		rel, err := filepath.Rel(rootDir, absPath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return "", tools.DiskFallbackMissing
+		}
+
+		info, err := os.Stat(absPath)
+		if err != nil || info.IsDir() {
+			return "", tools.DiskFallbackMissing
+		}
+		data, err := readFileWithRetry(absPath)
+		if err != nil {
+			return "", tools.DiskFallbackMissing
+		}
+		if language.IsBinaryContent(data) {
+			return "", tools.DiskFallbackBinary
+		}
+
+		content := string(data)
+		normRel := filepath.ToSlash(rel)
+		// Excluded files (ignored or too large) are served but never indexed: a
+		// sync could not pick them up anyway, so indexing them would only pollute.
+		if ignoreMatcher.ShouldIgnore(absPath) || ignoreMatcher.IsFileTooLarge(info.Size()) {
+			return content, tools.DiskFallbackServedRaw
+		}
+		// Genuine index gap: add the file to every index right now.
+		if err := indexSingleFile(absPath, normRel, info, rootDir, fileIndex, contentIndex, ignoreMatcher, astModule); err != nil {
+			return content, tools.DiskFallbackServedRaw
+		}
+		return content, tools.DiskFallbackIndexed
+	}
+
+	// triggerBackgroundSync runs a single index reconciliation in the background.
+	// The guard ensures repeated recoveries do not pile up concurrent disk walks.
+	var syncRunning atomic.Bool
+	triggerBackgroundSync := func() {
+		if !syncRunning.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			defer syncRunning.Store(false)
+			result := performSyncVerification(rootDir, fileIndex, contentIndex, ignoreMatcher, astModule, logger)
+			logger.Info("codeindex_read triggered background sync",
+				"missing", result.MissingFiles,
+				"stale", result.StaleFiles,
+				"modified", result.ModifiedFiles,
+				"duration", result.Duration,
+			)
+		}()
+	}
+
+	readHandler := &tools.ReadHandler{
+		ContentIndex: contentIndex,
+		Logger:       logger,
+		DiskFallback: diskFallback,
+		TriggerSync:  triggerBackgroundSync,
+	}
 	reindexHandler := &tools.ReindexHandler{
 		Logger: logger,
 		DoReindex: func() (int, int64, string, error) {

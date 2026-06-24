@@ -7,7 +7,7 @@ import (
 )
 
 // Version is the codeindex-mcp release version, used in the MCP handshake and status output.
-const Version = "0.6.0"
+const Version = "0.7.0"
 
 // readOnly marks a tool as non-mutating so MCP clients can skip permission prompts.
 var readOnly = &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: boolPtr(false)}
